@@ -172,6 +172,7 @@ def add_patient_info(input_path, output_path):
     patients.columns = map(str.upper, patients.columns)
 
     df = pd.read_csv(input_path)
+    df.columns = map(str.upper, df.columns)
 
     # get auxiliary features
     admittime_dict = dict(zip(admissions['HADM_ID'], admissions['ADMITTIME']))
@@ -198,11 +199,19 @@ def add_patient_info(input_path, output_path):
     df['GENDER'] = df['SUBJECT_ID'].apply(lambda x: gender_dict[x])
     df['GENDER'] = (df['GENDER'] == 'M').astype('int')
 
+    # add patient's BMI group
+    df['BMI'] = df['WEIGHT'] / (df['HEIGHT'] / 100) ** 2
+    df['BMI_GROUP'] = 1
+    df.loc[df['BMI'] >= 18.5, 'BMI_GROUP'] = 2
+    df.loc[df['BMI'] >= 24, 'BMI_GROUP'] = 3
+    df.loc[df['BMI'] >= 28, 'BMI_GROUP'] = 4
+
     # drop unneeded columns
     del df['DOB']
     del df['YOB']
     del df['ADMITTIME']
     del df['ADMITYEAR']
+    del df['BMI']
 
     # save result
     df.to_csv(output_path, index=False)
@@ -222,9 +231,9 @@ def extract_dataset(output_dir='dataset'):
     opath = output_dir / 'LABEVENTS_partitioned.csv'
     partition_rows(ipath, opath)
 
-    # add patient age and gender
+    # add patient info
     ipath = opath
-    opath = output_dir / 'LABEVENTS_with_demo1.csv'
+    opath = output_dir / 'LABEVENTS_with_demographics.csv'
     add_patient_info(ipath, opath)
 
 
