@@ -78,42 +78,47 @@ def partition_rows(input_path, output_path):
     for icustay_id in icustay_ids:
         # get mask for the current icu stay
         stay_id_mask = df['icustay_id'] == icustay_id
-
-        for feature in features.keys():
-            # compute the average value of the current feature
-            # for the current ICU stay
-            # this will generate warnings for ICU stays that doesn't
-            # have features for the whole ICU stay span, so suppress that
-            with warnings.catch_warnings():
-                warnings.simplefilter('ignore', category=RuntimeWarning)
-                mean = np.nanmean(df[stay_id_mask][feature])
-
-            # get mask for all of the NaN values
-            nan_mask = df[feature].isna()
-
-            if mean == np.nan:
-                # drop ICU stay rows (each ICU stay has multiple days)
-                # if the computed average is still NaN
-                df = df[~stay_id_mask]
-            else:
-                # fill NaN values of the current feature for the current ICU stay
-                # using the average computed above
-                df.loc[stay_id_mask & nan_mask, feature] = mean
+        df = fill_nas_or_drop(df, stay_id_mask, features.keys())
 
     # save result
     df.to_csv(output_path, index=False)
 
 
+def fill_nas_or_drop(df, stay_id_mask, features):
+    for feature in features:
+        # compute the average value of the current feature
+        # for the current ICU stay
+        # this will generate warnings for ICU stays that doesn't
+        # have features for the whole ICU stay span, so suppress that
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore', category=RuntimeWarning)
+            mean = np.nanmean(df[stay_id_mask][feature])
+
+        # drop ICU stay rows (each ICU stay has multiple days)
+        # if the computed average is still NaN
+        if mean == np.nan:
+            return df[~stay_id_mask]
+
+        # get mask for all of the NaN values
+        nan_mask = df[feature].isna()
+
+        # fill NaN values of the current feature for the current ICU stay
+        # using the average computed above
+        df.loc[stay_id_mask & nan_mask, feature] = mean
+
+    return df
+
+
 def add_patient_info(input_path, output_path):
-    admissions_path = MIMIC_PATH / 'ADMISSIONS.csv'
+    admissions_path = MIMIC_PATH / 'admissions.csv'
     admissions = pd.read_csv(admissions_path)
     admissions.columns = map(str.lower, admissions.columns)
 
-    icustays_path = MIMIC_PATH / 'ICUSTAYS.csv'
+    icustays_path = MIMIC_PATH / 'icustays.csv'
     icustays = pd.read_csv(icustays_path)
     icustays.columns = map(str.lower, icustays.columns)
 
-    patients_path = MIMIC_PATH / 'PATIENTS.csv'
+    patients_path = MIMIC_PATH / 'patients.csv'
     patients = pd.read_csv(patients_path)
     patients.columns = map(str.lower, patients.columns)
 
