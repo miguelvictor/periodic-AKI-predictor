@@ -18,6 +18,8 @@ LABEVENTS_FEATURES = {
     'hemoglobin': [51222],
     'platelets': [51265],
     'WBCs': [51300, 51301],
+    # below features are used for determining AKI
+    'serum creatinine': [51081],
 }
 CHARTEVENTS_FEATURES = {
     'height': [
@@ -30,133 +32,68 @@ CHARTEVENTS_FEATURES = {
         224639,  # kg
     ]
 }
-
-
-def filter_chunk(
-    *,
-    chunk,
-    item_ids,
-    output_path,
-    nonnull_columns,
-    columns_to_save,
-    first=False,
-):
-    # make sure headers are upper-cased
-    chunk.columns = map(str.upper, chunk.columns)
-
-    # drop rows that contains null values in the VALUE column
-    # drop rows that is not relevant
-    mask = chunk['ITEMID'].isin(item_ids)
-    chunk = chunk[mask].dropna(axis=0, how='any', subset=nonnull_columns)
-
-    # make sure HADM_ID is int
-    chunk = chunk.astype({'HADM_ID': 'int32'})
-
-    # convert height (inches to cm)
-    mask = chunk['ITEMID'].isin([226707, 1394])
-    chunk.loc[mask, 'VALUENUM'] = chunk.loc[mask, 'VALUENUM'] * 2.54
-
-    if first:
-        chunk.to_csv(output_path, index=False, columns=columns_to_save)
-    else:
-        chunk.to_csv(
-            output_path,
-            index=False,
-            columns=columns_to_save,
-            header=None,
-            mode='a',
-        )
-
-
-def filter_relevant_rows(output_path, chunksize=10_000_000):
-    labevents_path = MIMIC_PATH / 'LABEVENTS.csv'
-    chartevent_path = MIMIC_PATH / 'CHARTEVENTS.csv'
-
-    # define columns that should be non-null
-    # also the columns to save for this preprocessing step
-    nonnull_columns = ['SUBJECT_ID', 'HADM_ID', 'ITEMID', 'CHARTTIME', 'VALUE']
-    columns_to_save = nonnull_columns + ['VALUENUM', 'VALUEUOM']
-
-    # concatenate all of the item IDs that is relevant
-    labevents_item_ids = [
-        itemid
-        for ids in LABEVENTS_FEATURES.values()
-        for itemid in ids
-    ]
-    chartevents_item_ids = [
-        itemid
-        for ids in CHARTEVENTS_FEATURES.values()
-        for itemid in ids
-    ]
-
-    labevents_iterator = pd.read_csv(
-        labevents_path, iterator=True, chunksize=chunksize)
-    chartevents_iterator = pd.read_csv(
-        chartevent_path, iterator=True, chunksize=chunksize, low_memory=False)
-    first = True
-
-    for chunk in labevents_iterator:
-        filter_chunk(
-            chunk=chunk,
-            item_ids=labevents_item_ids,
-            output_path=output_path,
-            nonnull_columns=nonnull_columns,
-            columns_to_save=columns_to_save,
-            first=first,
-        )
-        first = False
-
-    for chunk in chartevents_iterator:
-        filter_chunk(
-            chunk=chunk,
-            item_ids=chartevents_item_ids,
-            output_path=output_path,
-            nonnull_columns=nonnull_columns,
-            columns_to_save=columns_to_save,
-            first=False,
-        )
+OUTPUTEVENTS_FEATURES = {}
 
 
 def partition_rows(input_path, output_path):
     df = pd.read_csv(input_path)
+    df.columns = map(str.lower, df.columns)
 
     # extract the day of the event
-    df['CHARTDAY'] = df['CHARTTIME'].astype(
+    df['chartday'] = df['charttime'].astype(
         'str').str.split(' ').apply(lambda x: x[0])
 
-    # group day into a specific admission
-    df['HADMID_DAY'] = df['HADM_ID'].astype('str') + '_' + df['CHARTDAY']
+    # group day into a specific ICU stay
+    df['icu_day'] = df['icustay_id'].astype('str') + '_' + df['chartday']
 
     # add feature label column
     features = {**LABEVENTS_FEATURES, **CHARTEVENTS_FEATURES}
     features_reversed = {v2: k for k, v1 in features.items() for v2 in v1}
-    df['FEATURE'] = df['ITEMID'].apply(lambda x: features_reversed[x])
+    df['feature'] = df['itemid'].apply(lambda x: features_reversed[x])
 
-    # save mapping of admission ID to patient ID
-    hadm_dict = dict(zip(df['HADMID_DAY'], df['SUBJECT_ID']))
+    # save mapping of icu stay ID to patient ID
+    icu_subject_mapping = dict(zip(df['icu_day'], df['subject_id']))
 
     # average all feature values each day
     df = pd.pivot_table(
         df,
-        index='HADMID_DAY',
-        columns='FEATURE',
-        values='VALUENUM',
+        index='icu_day',
+        columns='feature',
+        values='valuenum',
         fill_value=np.nan,
         aggfunc=np.nanmean,
         dropna=False,
     )
 
-    # fill NA values with mean values and round to 4 decimal places
-    for column in df.columns:
-        column_mean = df[column].mean(skipna=True)
-        print(f'Column "{column}" mean: {column_mean}')
-
-        df[column] = df[column].fillna(column_mean)
-        df[column] = df[column].round(4)
-
     # insert back information related to the patient (for persistence)
-    df['HADMID_DAY'] = df.index
-    df['SUBJECT_ID'] = df['HADMID_DAY'].apply(lambda x: hadm_dict[x])
+    df['icu_day'] = df.index
+    df['icustay_id'] = df['icu_day'].str.split(
+        '_').apply(lambda x: x[0]).astype('int')
+    df['subject_id'] = df['icu_day'].apply(lambda x: icu_subject_mapping[x])
+
+    # fill NaN values with the average feature value (only for the current ICU stay)
+    # ICU stays with NaN average values are dropped
+    icustay_ids = pd.unique(df['icustay_id'])
+    for icustay_id in icustay_ids:
+        # get mask for the current icu stay
+        stay_id_mask = df['icustay_id'] == icustay_id
+
+        for feature in features.keys():
+            # compute the average value of the current feature
+            # for the current ICU stay
+            mean = np.nanmean(df[stay_id_mask][feature])
+
+            # get mask for all of the NaN values
+            nan_mask = df[feature].isna()
+
+            if mean == np.nan:
+                # drop ICU stay rows (each ICU stay has multiple days)
+                # if the computed average is still NaN
+                df = df[~stay_id_mask]
+            else:
+                # fill NaN values of the current feature for the current ICU stay
+                # using the average computed above
+                df.loc[stay_id_mask & df[nan_mask], feature] = mean
 
     # save result
     df.to_csv(output_path, index=False)
@@ -222,18 +159,14 @@ def extract_dataset(output_dir='dataset'):
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=False, exist_ok=True)
 
-    # filter out relevant rows in LABEVENTS
-    opath = output_dir / 'LABEVENTS_filtered.csv'
-    filter_relevant_rows(opath)
-
     # partition features into days
-    ipath = opath
-    opath = output_dir / 'LABEVENTS_partitioned.csv'
+    ipath = output_dir / 'filtered_events.csv'
+    opath = output_dir / 'events_partitioned.csv'
     partition_rows(ipath, opath)
 
     # add patient info
     ipath = opath
-    opath = output_dir / 'LABEVENTS_with_demographics.csv'
+    opath = output_dir / 'events_with_demographics.csv'
     add_patient_info(ipath, opath)
 
 
