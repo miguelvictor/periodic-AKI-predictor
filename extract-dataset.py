@@ -3,6 +3,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import fire
+import warnings
 
 DB_PATH = Path('databases')
 MIMIC_PATH = DB_PATH / 'mimic3'
@@ -81,7 +82,11 @@ def partition_rows(input_path, output_path):
         for feature in features.keys():
             # compute the average value of the current feature
             # for the current ICU stay
-            mean = np.nanmean(df[stay_id_mask][feature])
+            # this will generate warnings for ICU stays that doesn't
+            # have features for the whole ICU stay span, so suppress that
+            with warnings.catch_warnings():
+                warnings.simplefilter('ignore', category=RuntimeWarning)
+                mean = np.nanmean(df[stay_id_mask][feature])
 
             # get mask for all of the NaN values
             nan_mask = df[feature].isna()
@@ -93,7 +98,7 @@ def partition_rows(input_path, output_path):
             else:
                 # fill NaN values of the current feature for the current ICU stay
                 # using the average computed above
-                df.loc[stay_id_mask & df[nan_mask], feature] = mean
+                df.loc[stay_id_mask & nan_mask, feature] = mean
 
     # save result
     df.to_csv(output_path, index=False)
@@ -102,53 +107,51 @@ def partition_rows(input_path, output_path):
 def add_patient_info(input_path, output_path):
     admissions_path = MIMIC_PATH / 'ADMISSIONS.csv'
     admissions = pd.read_csv(admissions_path)
-    admissions.columns = map(str.upper, admissions.columns)
+    admissions.columns = map(str.lower, admissions.columns)
+
+    icustays_path = MIMIC_PATH / 'ICUSTAYS.csv'
+    icustays = pd.read_csv(icustays_path)
+    icustays.columns = map(str.lower, icustays.columns)
 
     patients_path = MIMIC_PATH / 'PATIENTS.csv'
     patients = pd.read_csv(patients_path)
-    patients.columns = map(str.upper, patients.columns)
+    patients.columns = map(str.lower, patients.columns)
 
     df = pd.read_csv(input_path)
-    df.columns = map(str.upper, df.columns)
+    df.columns = map(str.lower, df.columns)
 
     # get auxiliary features
-    admittime_dict = dict(zip(admissions['HADM_ID'], admissions['ADMITTIME']))
-    dob_dict = dict(zip(patients['SUBJECT_ID'], patients['DOB']))
-    gender_dict = dict(zip(patients['SUBJECT_ID'], patients['GENDER']))
+    hadm_id_mapping = dict(zip(icustays['icustay_id'], icustays['hadm_id']))
+    admittime_mapping = dict(
+        zip(admissions['hadm_id'], admissions['admittime']))
+    dob_mapping = dict(zip(patients['subject_id'], patients['dob']))
+    gender_mapping = dict(zip(patients['subject_id'], patients['gender']))
 
     # retrieve admission ID from HADMID_DAY
-    df['HADM_ID'] = df['HADMID_DAY'].str.split('_').apply(lambda x: x[0])
-    df['HADM_ID'] = df['HADM_ID'].astype('int')
+    df['icustay_id'] = df['icu_day'].str.split('_').apply(lambda x: x[0])
+    df['icustay_id'] = df['icustay_id'].astype('int')
+    df['hadm_id'] = df['icustay_id'].apply(lambda x: hadm_id_mapping[x])
 
     # compute patient's age
-    df['DOB'] = df['SUBJECT_ID'].apply(lambda x: dob_dict[x])
-    df['YOB'] = df['DOB'].str.split('-').apply(lambda x: x[0]).astype('int')
-    df['ADMITTIME'] = df['HADM_ID'].apply(lambda x: admittime_dict[x])
-    df['ADMITYEAR'] = df['ADMITTIME'].str.split(
+    df['dob'] = df['subject_id'].apply(lambda x: dob_mapping[x])
+    df['yob'] = df['dob'].str.split('-').apply(lambda x: x[0]).astype('int')
+    df['admittime'] = df['hadm_id'].apply(lambda x: admittime_mapping[x])
+    df['admityear'] = df['admittime'].str.split(
         '-').apply(lambda x: x[0]).astype('int')
-    df['AGE'] = df['ADMITYEAR'].subtract(df['YOB'])
+    df['age'] = df['admityear'].subtract(df['yob'])
 
-    # drop patients with age > 89
-    criteria = df['AGE'] <= 89
-    df = df[criteria]
+    # set max age to 90
+    df.loc[df['age'] > 89, 'age'] = 90
 
     # add patient's gender
-    df['GENDER'] = df['SUBJECT_ID'].apply(lambda x: gender_dict[x])
-    df['GENDER'] = (df['GENDER'] == 'M').astype('int')
-
-    # add patient's BMI group
-    df['BMI'] = df['WEIGHT'] / (df['HEIGHT'] / 100) ** 2
-    df['BMI_GROUP'] = 1
-    df.loc[df['BMI'] >= 18.5, 'BMI_GROUP'] = 2
-    df.loc[df['BMI'] >= 24, 'BMI_GROUP'] = 3
-    df.loc[df['BMI'] >= 28, 'BMI_GROUP'] = 4
+    df['gender'] = df['subject_id'].apply(lambda x: gender_mapping[x])
+    df['gender'] = (df['gender'] == 'M').astype('int')
 
     # drop unneeded columns
-    del df['DOB']
-    del df['YOB']
-    del df['ADMITTIME']
-    del df['ADMITYEAR']
-    del df['BMI']
+    del df['dob']
+    del df['yob']
+    del df['admittime']
+    del df['admityear']
 
     # save result
     df.to_csv(output_path, index=False)
