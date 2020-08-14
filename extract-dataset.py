@@ -36,7 +36,7 @@ CHARTEVENTS_FEATURES = {
 OUTPUTEVENTS_FEATURES = {}
 
 
-def partition_rows(input_path, output_path):
+def partition_rows(input_path, output_path, stats_path):
     df = pd.read_csv(input_path)
     df.columns = map(str.lower, df.columns)
 
@@ -76,15 +76,16 @@ def partition_rows(input_path, output_path):
     # ICU stays with NaN average values are dropped
     icustay_ids = pd.unique(df['icustay_id'])
     for icustay_id in icustay_ids:
-        # get mask for the current icu stay
-        stay_id_mask = df['icustay_id'] == icustay_id
-        df = fill_nas_or_drop(df, stay_id_mask, features.keys())
+        df = fill_nas_or_drop(df, icustay_id, features.keys())
 
     # save result
     df.to_csv(output_path, index=False)
 
 
-def fill_nas_or_drop(df, stay_id_mask, features):
+def fill_nas_or_drop(df, icustay_id, features):
+    # get mask for the current icu stay
+    stay_id_mask = df['icustay_id'] == icustay_id
+
     for feature in features:
         # compute the average value of the current feature
         # for the current ICU stay
@@ -96,7 +97,7 @@ def fill_nas_or_drop(df, stay_id_mask, features):
 
         # drop ICU stay rows (each ICU stay has multiple days)
         # if the computed average is still NaN
-        if mean == np.nan:
+        if not np.isfinite(mean):
             return df[~stay_id_mask]
 
         # get mask for all of the NaN values
@@ -166,11 +167,12 @@ def extract_dataset(output_dir='dataset'):
     # create output dir if it does not exist
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=False, exist_ok=True)
+    stats_path = output_dir / 'stats.txt'
 
     # partition features into days
     ipath = output_dir / 'filtered_events.csv'
     opath = output_dir / 'events_partitioned.csv'
-    partition_rows(ipath, opath)
+    partition_rows(ipath, opath, stats_path)
 
     # add patient info
     ipath = opath
