@@ -1,8 +1,9 @@
 from pathlib import Path
 
+import fire
 import numpy as np
 import pandas as pd
-import fire
+import re
 import warnings
 
 DB_PATH = Path('databases')
@@ -129,6 +130,8 @@ def add_patient_info(input_path, output_path):
         zip(admissions['hadm_id'], admissions['admittime']))
     dob_mapping = dict(zip(patients['subject_id'], patients['dob']))
     gender_mapping = dict(zip(patients['subject_id'], patients['gender']))
+    ethnicity_mapping = dict(
+        zip(admissions['hadm_id'], admissions['ethnicity']))
 
     # retrieve admission ID from HADMID_DAY
     df['icustay_id'] = df['icu_day'].str.split('_').apply(lambda x: x[0])
@@ -150,11 +153,17 @@ def add_patient_info(input_path, output_path):
     df['gender'] = df['subject_id'].apply(lambda x: gender_mapping[x])
     df['gender'] = (df['gender'] == 'M').astype('int')
 
+    # add patient's ethnicity (black or not)
+    df['ethnicity'] = df['hadm_id'].apply(lambda x: ethnicity_mapping[x])
+    df['black'] = df['ethnicity'].str.contains(
+        r'.*black.*', flags=re.IGNORECASE).astype('int')
+
     # drop unneeded columns
     del df['dob']
     del df['yob']
     del df['admittime']
     del df['admityear']
+    del df['black']
 
     # save result
     df.to_csv(output_path, index=False)
