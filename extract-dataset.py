@@ -163,7 +163,7 @@ def add_patient_info(input_path, output_path):
     del df['yob']
     del df['admittime']
     del df['admityear']
-    del df['black']
+    del df['ethnicity']
 
     # save result
     df.to_csv(output_path, index=False)
