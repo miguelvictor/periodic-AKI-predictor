@@ -22,8 +22,7 @@ where itemid in (
         51006, -- blood urea nitrogen
         51222, -- hemoglobin
         51265, -- platelets
-        51300, 51301, -- white blood cells
-        51081 -- serum creatinine
+        51300, 51301 -- white blood cells
     )
     and i.los >= 3
     and l.valuenum is not null

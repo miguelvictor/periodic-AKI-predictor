@@ -19,8 +19,6 @@ LABEVENTS_FEATURES = {
     'hemoglobin': [51222],
     'platelets': [51265],
     'WBCs': [51300, 51301],
-    # below features are used for determining AKI
-    'serum creatinine': [51081],
 }
 CHARTEVENTS_FEATURES = {
     'height': [
@@ -33,7 +31,6 @@ CHARTEVENTS_FEATURES = {
         224639,  # kg
     ]
 }
-OUTPUTEVENTS_FEATURES = {}
 
 
 def partition_rows(input_path, output_path, stats_path):
