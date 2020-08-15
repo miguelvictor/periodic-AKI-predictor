@@ -34,7 +34,7 @@ CHARTEVENTS_FEATURES = {
 }
 
 
-def partition_rows(input_path, output_path, stats_path):
+def partition_rows(input_path, output_path):
     df = pd.read_csv(input_path)
     df.columns = map(str.lower, df.columns)
 
@@ -70,11 +70,38 @@ def partition_rows(input_path, output_path, stats_path):
         '_').apply(lambda x: x[0]).astype('int')
     df['subject_id'] = df['icu_day'].apply(lambda x: icu_subject_mapping[x])
 
+    # save result
+    df.to_csv(output_path, index=False)
+
+
+def impute_holes(input_path, output_path):
+    df = pd.read_csv(input_path)
+    df.columns = map(str.lower, df.columns)
+
+    # collect all feature keys
+    features = {**LABEVENTS_FEATURES, **CHARTEVENTS_FEATURES}.keys()
+
     # fill NaN values with the average feature value (only for the current ICU stay)
     # ICU stays with NaN average values are dropped
     icustay_ids = pd.unique(df['icustay_id'])
     for icustay_id in icustay_ids:
-        df = fill_nas_or_drop(df, icustay_id, features.keys())
+        # get mask for the current icu stay
+        stay_id_mask = df['icustay_id'] == icustay_id
+
+        # sanity check: icu stays los should be >= 3
+        assert df[stay_id_mask].shape[
+            0] >= 3, f'ERROR - ICU stay id={icustay_id} (los invalid)'
+
+        # drop rows with no creatinine from the 3rd day onwards
+        if not np.any(df.loc[stay_id_mask]['feature'].isna()[2:]):
+            print(f'WARN - Will drop ICU stay: id={icustay_id} (creatinine)')
+
+            df = df[~stay_id_mask]  # exclude current ICU stay
+            continue  # go to next ICU stay
+
+        # fill feature missing values with the mean value
+        # of the ICU stay, dropping ICU stays with missing values
+        df = fill_nas_or_drop(df, icustay_id, features)
 
     # save result
     df.to_csv(output_path, index=False)
@@ -169,21 +196,140 @@ def add_patient_info(input_path, output_path):
     df.to_csv(output_path, index=False)
 
 
+def add_aki_labels(input_path, output_path):
+    df = pd.read_csv(input_path)
+    df.columns = map(str.lower, df.columns)
+
+    icustay_ids = pd.unique(df['icustay_id'])
+    for icustay_id in icustay_ids:
+        # get auxiliary variables
+        stay_id_mask = df['icustay_id'] == icustay_id
+        black = df[stay_id_mask]['black'][0]
+        age = df[stay_id_mask]['age'][0]
+        gender = df[stay_id_mask]['gender'][0]
+
+        # get difference of creatinine levels
+        scr = df[stay_id_mask]['creatinine']
+        diffs = scr[1:].values - scr[:-1].values
+
+        # drop ICU stays with AKIs for the first 48 hours
+        if (
+            has_aki(diff=diffs[0])
+            or has_aki(scr=scr[0], black=black, age=age, gender=gender)
+            or has_aki(scr=scr[1], black=black, age=age, gender=gender)
+        ):
+            print(f'WARN - Will drop ICU stay: id={icustay_id} (AKI 48 hours)')
+            df = df[~stay_id_mask]
+            continue
+
+        # we do next-day AKI prediction
+        # use the 3rd day's creatinine level to get the AKI label of day 2 data
+        aki1 = pd.Series(diffs[1:]).apply(lambda x: has_aki(diff=x))
+        aki2 = scr[2:].apply(lambda x: has_aki(
+            scr=x, black=black, age=age, gender=gender))
+        aki = (aki1 | aki2).astype('int').values.tolist()
+
+        # drop last day values
+        last_day_index = df[stay_id_mask].index[-1]
+        df = df.drop(last_day_index)
+
+        # assign aki labels
+        df.loc[stay_id_mask, 'aki'] = pd.Series([0] + aki)
+
+    # save results
+    df.to_csv(output_path, index=False)
+
+
+def has_aki(diff=None, scr=None, black=None, age=None, gender=None):
+    # KDIGO criteria no. 1
+    # Increase in SCr by >= 0.3 mg/dl (>= 26.5 lmol/l) within 48 hours
+    if diff is not None:
+        return diff >= 0.3
+
+    # KDIGO criteria no. 2
+    # increase in SCr to ≥1.5 times baseline, which is known or
+    # presumed to have occurred within the prior 7 days
+    if scr is not None:
+        assert black is not None
+        assert age is not None
+        assert gender is not None
+
+        baseline = get_baseline(black=black, age=age, gender=gender)
+        return scr >= 1.5 * baseline
+
+    # KDIGO criteria no. 3
+    # Urine volume <0.5 ml/kg/h for 6 hours
+    # not included since urine output data is scarce in MIMIC-III dataset
+
+    raise AssertionError('ERROR - Should pass diff OR scr')
+
+
+def get_baseline(*, black, age, gender):
+    if 20 <= age <= 24:
+        if black == 1:
+            # black males: 1.5, black females: 1.2
+            return 1.5 if gender == 1 else 1.2
+        else:
+            # other males: 1.3, other females: 1.0
+            return 1.3 if gender == 1 else 1.0
+
+    if 25 <= age <= 29:
+        if black == 1:
+            # black males: 1.5, black females: 1.2
+            return 1.5 if gender == 1 else 1.1
+        else:
+            # other males: 1.3, other females: 1.0
+            return 1.2 if gender == 1 else 1.0
+
+    if 30 <= age <= 39:
+        if black == 1:
+            # black males: 1.5, black females: 1.2
+            return 1.4 if gender == 1 else 1.1
+        else:
+            # other males: 1.3, other females: 1.0
+            return 1.2 if gender == 1 else 0.9
+
+    if 40 <= age <= 54:
+        if black == 1:
+            # black males: 1.5, black females: 1.2
+            return 1.3 if gender == 1 else 1.0
+        else:
+            # other males: 1.3, other females: 1.0
+            return 1.1 if gender == 1 else 0.9
+
+    # for ages > 65
+    if black == 1:
+        # black males: 1.5, black females: 1.2
+        return 1.2 if gender == 1 else 0.9
+    else:
+        # other males: 1.3, other females: 1.0
+        return 1.0 if gender == 1 else 0.8
+
+
 def extract_dataset(output_dir='dataset'):
     # create output dir if it does not exist
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=False, exist_ok=True)
-    stats_path = output_dir / 'stats.txt'
 
     # partition features into days
     ipath = output_dir / 'filtered_events.csv'
     opath = output_dir / 'events_partitioned.csv'
-    partition_rows(ipath, opath, stats_path)
+    partition_rows(ipath, opath)
+
+    # fill empty holes with median values
+    ipath = opath
+    opath = output_dir / 'events_imputed.csv'
+    impute_holes(ipath, opath)
 
     # add patient info
     ipath = opath
     opath = output_dir / 'events_with_demographics.csv'
     add_patient_info(ipath, opath)
+
+    # add AKI labels
+    ipath = opath
+    opath = output_dir / 'events_complete.csv'
+    add_aki_labels(ipath, opath)
 
 
 if __name__ == '__main__':
