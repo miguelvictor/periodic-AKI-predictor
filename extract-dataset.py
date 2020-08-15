@@ -114,8 +114,9 @@ def impute_holes(input_path, output_path):
             print(f'WARN - Will drop ICU stay: id={icustay_id} (creatinine)')
             df = df[~stay_id_mask]
             continue
+
         # drop ICU stay days (and onwards) with no creatinine levels defined
-        else:
+        if nan_index != -1:
             print(f'WARN - Will drop days({nan_index}) of id={icustay_id}')
             nan_indices = df[stay_id_mask].index[nan_index:]
             df = df.drop(nan_indices)
