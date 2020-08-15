@@ -1,13 +1,23 @@
 from pathlib import Path
 
 import fire
+import logging
 import numpy as np
 import pandas as pd
 import re
-import warnings
 
 DB_PATH = Path('databases')
 MIMIC_PATH = DB_PATH / 'mimic3'
+
+logging.basicConfig(
+    filename='extract-dataset.logs',
+    filemode='a',
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    datefmt='%H:%M:%S',
+    level=logging.DEBUG,
+)
+logger = logging.getLogger('default')
+
 LABEVENTS_FEATURES = {
     'bicarbonate': [50882],  # mEq/L
     'chloride': [50902],
@@ -35,6 +45,7 @@ CHARTEVENTS_FEATURES = {
 
 
 def partition_rows(input_path, output_path):
+    logger.info('`partition_rows` has started')
     df = pd.read_csv(input_path)
     df.columns = map(str.lower, df.columns)
 
@@ -76,9 +87,11 @@ def partition_rows(input_path, output_path):
 
     # save result
     df.to_csv(output_path, index=False)
+    logger.info('`partition_rows` is done')
 
 
 def impute_holes(input_path, output_path):
+    logger.info('`impute_holes` has started')
     df = pd.read_csv(input_path)
     df.columns = map(str.lower, df.columns)
 
@@ -88,6 +101,8 @@ def impute_holes(input_path, output_path):
     # fill NaN values with the average feature value (only for the current ICU stay)
     # ICU stays with NaN average values are dropped
     icustay_ids = pd.unique(df['icustay_id'])
+    logger.info(f'Total ICU stays: {len(icustay_ids)}')
+
     for icustay_id in icustay_ids:
         # get mask for the current icu stay
         stay_id_mask = df['icustay_id'] == icustay_id
@@ -96,28 +111,31 @@ def impute_holes(input_path, output_path):
         # the actual measurements done in labevents or chartevents are fewer than that
         # so we drop them here
         if df[stay_id_mask].shape[0] < 3:
-            print(f'WARN - Will drop ICU stay: id={icustay_id} (creatinine)')
+            logger.warning(f'ICU stay id={icustay_id} has los<3 (dropped)')
             df = df[~stay_id_mask]
             continue
 
         # drop ICU stays with no creatinine levels
         # after the first 48 hours
         if not np.isfinite(df[stay_id_mask]['creatinine'].values[2:]).any():
-            print(f'WARN - Will drop ICU stay: id={icustay_id} (creatinine)')
+            logger.warning(f'ICU stay id={icustay_id} creatinine levels'
+                           + ' are all NaN after 48 hours (dropped)')
             df = df[~stay_id_mask]
             continue
 
-        nan_index = get_nan_index(df[stay_id_mask]['creatinine'])
         # drop ICU stays with no creatinine levels
         # at the third day
+        nan_index = get_nan_index(df[stay_id_mask]['creatinine'])
         if nan_index == 2:
-            print(f'WARN - Will drop ICU stay: id={icustay_id} (creatinine)')
+            logger.warning(f'ICU stay id={icustay_id} creatinine level'
+                           + ' at 3rd day is not available (dropped)')
             df = df[~stay_id_mask]
             continue
 
         # drop ICU stay days (and onwards) with no creatinine levels defined
         if nan_index != -1:
-            print(f'WARN - Will drop days({nan_index}) of id={icustay_id}')
+            logger.warning(f'ICU stay id={icustay_id} creatinine level'
+                           + f' at {nan_index}th day is not available (dropped)')
             nan_indices = df[stay_id_mask].index[nan_index:]
             df = df.drop(nan_indices)
 
@@ -127,6 +145,7 @@ def impute_holes(input_path, output_path):
 
     # save result
     df.to_csv(output_path, index=False)
+    logger.info('`impute_holes` is done')
 
 
 def fill_nas_or_drop(df, icustay_id, features):
@@ -134,30 +153,23 @@ def fill_nas_or_drop(df, icustay_id, features):
     stay_id_mask = df['icustay_id'] == icustay_id
 
     for feature in features:
-        # compute the average value of the current feature
-        # for the current ICU stay
-        # this will generate warnings for ICU stays that doesn't
-        # have features for the whole ICU stay span, so suppress that
-        with warnings.catch_warnings():
-            warnings.simplefilter('ignore', category=RuntimeWarning)
-            mean = np.nanmean(df[stay_id_mask][feature])
-
-        # drop ICU stay rows (each ICU stay has multiple days)
-        # if the computed average is still NaN
-        if not np.isfinite(mean):
+        # drop ICU stays with features that doesn't contain any
+        # finite values (e.g., all values are NaN)
+        entity_features = df.loc[stay_id_mask, feature]
+        if not np.isfinite(entity_features).any():
+            logger.warning(f'ICU stay id={icustay_id} feature={feature}'
+                           + ' does not contain valid values (dropped)')
             return df[~stay_id_mask]
 
-        # get mask for all of the NaN values
-        nan_mask = df[feature].isna()
-
-        # fill NaN values of the current feature for the current ICU stay
-        # using the average computed above
-        df.loc[stay_id_mask & nan_mask, feature] = mean
+        # we impute feature values using forward/backward fills
+        df.loc[stay_id_mask] = df[stay_id_mask].ffill().bfill()
 
     return df
 
 
 def add_patient_info(input_path, output_path):
+    logger.info('`add_patient_info` has started')
+
     admissions_path = MIMIC_PATH / 'admissions.csv'
     admissions = pd.read_csv(admissions_path)
     admissions.columns = map(str.lower, admissions.columns)
@@ -172,6 +184,9 @@ def add_patient_info(input_path, output_path):
 
     df = pd.read_csv(input_path)
     df.columns = map(str.lower, df.columns)
+
+    icustay_ids = pd.unique(df['icustay_id'])
+    logger.info(f'Total ICU stays: {len(icustay_ids)}')
 
     # get auxiliary features
     hadm_id_mapping = dict(zip(icustays['icustay_id'], icustays['hadm_id']))
@@ -216,13 +231,18 @@ def add_patient_info(input_path, output_path):
 
     # save result
     df.to_csv(output_path, index=False)
+    logger.info('`add_patient_info` is done')
 
 
 def add_aki_labels(input_path, output_path):
+    logger.info('`add_aki_labels` has started')
+
     df = pd.read_csv(input_path)
     df.columns = map(str.lower, df.columns)
 
     icustay_ids = pd.unique(df['icustay_id'])
+    logger.info(f'Total ICU stays: {len(icustay_ids)}')
+
     for icustay_id in icustay_ids:
         # get auxiliary variables
         stay_id_mask = df['icustay_id'] == icustay_id
@@ -240,7 +260,8 @@ def add_aki_labels(input_path, output_path):
             or has_aki(scr=scr[0], black=black, age=age, gender=gender)
             or has_aki(scr=scr[1], black=black, age=age, gender=gender)
         ):
-            print(f'WARN - Will drop ICU stay: id={icustay_id} (AKI 48 hours)')
+            logger.warning(
+                f'ICU stay id={icustay_id} has AKI pre-48 (dropped)')
             df = df[~stay_id_mask]
             continue
 
@@ -260,6 +281,7 @@ def add_aki_labels(input_path, output_path):
 
     # save results
     df.to_csv(output_path, index=False)
+    logger.info('`add_aki_labels` is done')
 
 
 def has_aki(diff=None, scr=None, black=None, age=None, gender=None):
