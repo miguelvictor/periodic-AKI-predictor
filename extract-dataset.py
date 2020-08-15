@@ -16,10 +16,10 @@ LABEVENTS_FEATURES = {
     'magnesium': [50960],
     'potassium': [50822, 50971],  # mEq/L
     'sodium': [50824, 50983],  # mEq/L == mmol/L
-    'BUN': [51006],
+    'bun': [51006],
     'hemoglobin': [51222],
     'platelets': [51265],
-    'WBCs': [51300, 51301],
+    'wbcs': [51300, 51301],
 }
 CHARTEVENTS_FEATURES = {
     'height': [
