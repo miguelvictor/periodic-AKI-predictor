@@ -53,6 +53,10 @@ def partition_rows(input_path, output_path):
     # save mapping of icu stay ID to patient ID
     icu_subject_mapping = dict(zip(df['icu_day'], df['subject_id']))
 
+    # convert height (inches to cm)
+    mask = (df['itemid'] == 226707) | (df['itemid'] == 1394)
+    df.loc[mask, 'valuenum'] = df[mask]['valuenum'] * 2.54
+
     # average all feature values each day
     df = pd.pivot_table(
         df,
@@ -92,12 +96,25 @@ def impute_holes(input_path, output_path):
         assert df[stay_id_mask].shape[
             0] >= 3, f'ERROR - ICU stay id={icustay_id} (los invalid)'
 
-        # drop rows with no creatinine from the 3rd day onwards
-        if not np.any(df.loc[stay_id_mask]['feature'].isna()[2:]):
+        # drop ICU stays with no creatinine levels
+        # after the first 48 hours
+        if not np.isfinite(df[stay_id_mask]['creatinine'].values[2:]).any():
             print(f'WARN - Will drop ICU stay: id={icustay_id} (creatinine)')
+            df = df[~stay_id_mask]
+            continue
 
-            df = df[~stay_id_mask]  # exclude current ICU stay
-            continue  # go to next ICU stay
+        nan_index = get_nan_index(df[stay_id_mask]['creatinine'])
+        # drop ICU stays with no creatinine levels
+        # at the third day
+        if nan_index == 2:
+            print(f'WARN - Will drop ICU stay: id={icustay_id} (creatinine)')
+            df = df[~stay_id_mask]
+            continue
+        # drop ICU stay days (and onwards) with no creatinine levels defined
+        else:
+            print(f'WARN - Will drop days({nan_index}) of id={icustay_id}')
+            nan_indices = df[stay_id_mask].index[nan_index:]
+            df = df.drop(nan_indices)
 
         # fill feature missing values with the mean value
         # of the ICU stay, dropping ICU stays with missing values
@@ -304,6 +321,15 @@ def get_baseline(*, black, age, gender):
     else:
         # other males: 1.3, other females: 1.0
         return 1.0 if gender == 1 else 0.8
+
+
+def get_nan_index(series):
+    result = ~np.isfinite(series)
+    for i, x in enumerate(result[2:]):
+        if x:
+            return i + 2
+
+    return -1
 
 
 def extract_dataset(output_dir='dataset'):
