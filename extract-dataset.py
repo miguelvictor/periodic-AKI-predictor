@@ -246,13 +246,13 @@ def add_aki_labels(input_path, output_path):
     for icustay_id in icustay_ids:
         # get auxiliary variables
         stay_id_mask = df['icustay_id'] == icustay_id
-        black = df[stay_id_mask]['black'][0]
-        age = df[stay_id_mask]['age'][0]
-        gender = df[stay_id_mask]['gender'][0]
+        black = df[stay_id_mask]['black'].values[0]
+        age = df[stay_id_mask]['age'].values[0]
+        gender = df[stay_id_mask]['gender'].values[0]
 
         # get difference of creatinine levels
-        scr = df[stay_id_mask]['creatinine']
-        diffs = scr[1:].values - scr[:-1].values
+        scr = df[stay_id_mask]['creatinine'].values
+        diffs = scr[1:] - scr[:-1]
 
         # drop ICU stays with AKIs for the first 48 hours
         if (
@@ -268,7 +268,7 @@ def add_aki_labels(input_path, output_path):
         # we do next-day AKI prediction
         # use the 3rd day's creatinine level to get the AKI label of day 2 data
         aki1 = pd.Series(diffs[1:]).apply(lambda x: has_aki(diff=x))
-        aki2 = scr[2:].apply(lambda x: has_aki(
+        aki2 = pd.Series(scr[2:]).apply(lambda x: has_aki(
             scr=x, black=black, age=age, gender=gender))
         aki = (aki1 | aki2).astype('int').values.tolist()
 
@@ -277,7 +277,8 @@ def add_aki_labels(input_path, output_path):
         df = df.drop(last_day_index)
 
         # assign aki labels
-        df.loc[stay_id_mask, 'aki'] = pd.Series([0] + aki)
+        aki_labels = [0] + aki
+        df.loc[stay_id_mask, 'aki'] = aki_labels
 
     # save results
     df.to_csv(output_path, index=False)
@@ -359,7 +360,7 @@ def get_nan_index(series):
     return -1
 
 
-def extract_dataset(output_dir='dataset'):
+def extract_dataset(output_dir='dataset', redo=False):
     # create output dir if it does not exist
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=False, exist_ok=True)
@@ -367,22 +368,26 @@ def extract_dataset(output_dir='dataset'):
     # partition features into days
     ipath = output_dir / 'filtered_events.csv'
     opath = output_dir / 'events_partitioned.csv'
-    partition_rows(ipath, opath)
+    if redo or not opath.exists():
+        partition_rows(ipath, opath)
 
     # fill empty holes with median values
     ipath = opath
     opath = output_dir / 'events_imputed.csv'
-    impute_holes(ipath, opath)
+    if redo or not opath.exists():
+        impute_holes(ipath, opath)
 
     # add patient info
     ipath = opath
     opath = output_dir / 'events_with_demographics.csv'
-    add_patient_info(ipath, opath)
+    if redo or not opath.exists():
+        add_patient_info(ipath, opath)
 
     # add AKI labels
     ipath = opath
     opath = output_dir / 'events_complete.csv'
-    add_aki_labels(ipath, opath)
+    if redo or not opath.exists():
+        add_aki_labels(ipath, opath)
 
 
 if __name__ == '__main__':
