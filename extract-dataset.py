@@ -92,9 +92,13 @@ def impute_holes(input_path, output_path):
         # get mask for the current icu stay
         stay_id_mask = df['icustay_id'] == icustay_id
 
-        # sanity check: icu stays los should be >= 3
-        assert df[stay_id_mask].shape[
-            0] >= 3, f'ERROR - ICU stay id={icustay_id} (los invalid)'
+        # there are ICU stays that even though its los >= 3
+        # the actual measurements done in labevents or chartevents are fewer than that
+        # so we drop them here
+        if df[stay_id_mask].shape[0] < 3:
+            print(f'WARN - Will drop ICU stay: id={icustay_id} (creatinine)')
+            df = df[~stay_id_mask]
+            continue
 
         # drop ICU stays with no creatinine levels
         # after the first 48 hours
