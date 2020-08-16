@@ -277,8 +277,16 @@ def add_aki_labels(input_path, output_path):
         df = df.drop(last_day_index)
 
         # assign aki labels
+        stay_id_mask = df['icustay_id'] == icustay_id
         aki_labels = [0] + aki
         df.loc[stay_id_mask, 'aki'] = aki_labels
+
+        # truncate icu stays (retain first 8 days)
+        to_truncate_indices = df[stay_id_mask].index[8:]
+        if len(to_truncate_indices) > 0:
+            logger.warning(
+                f'ICU stay id={icustay_id} will be truncated to 8 days.')
+            df = df.drop(to_truncate_indices)
 
     # save results
     df.to_csv(output_path, index=False)
