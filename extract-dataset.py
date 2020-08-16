@@ -66,7 +66,7 @@ def partition_rows(input_path, output_path):
 
     # convert height (inches to cm)
     mask = (df['itemid'] == 226707) | (df['itemid'] == 1394)
-    df.loc[mask, 'valuenum'] = df[mask]['valuenum'] * 2.54
+    df.loc[mask, 'valuenum'] *= 2.54
 
     # average all feature values each day
     df = pd.pivot_table(
@@ -87,7 +87,7 @@ def partition_rows(input_path, output_path):
 
     # save result
     df.to_csv(output_path, index=False)
-    logger.info('`partition_rows` is done')
+    logger.info('`partition_rows` has ended')
 
 
 def impute_holes(input_path, output_path):
@@ -145,7 +145,7 @@ def impute_holes(input_path, output_path):
 
     # save result
     df.to_csv(output_path, index=False)
-    logger.info('`impute_holes` is done')
+    logger.info('`impute_holes` has ended')
 
 
 def fill_nas_or_drop(df, icustay_id, features):
@@ -231,7 +231,7 @@ def add_patient_info(input_path, output_path):
 
     # save result
     df.to_csv(output_path, index=False)
-    logger.info('`add_patient_info` is done')
+    logger.info('`add_patient_info` has ended')
 
 
 def add_aki_labels(input_path, output_path):
@@ -282,7 +282,7 @@ def add_aki_labels(input_path, output_path):
 
     # save results
     df.to_csv(output_path, index=False)
-    logger.info('`add_aki_labels` is done')
+    logger.info('`add_aki_labels` has ended')
 
 
 def has_aki(diff=None, scr=None, black=None, age=None, gender=None):
@@ -360,6 +360,38 @@ def get_nan_index(series):
     return -1
 
 
+def transform_outliers(input_path, output_path):
+    logger.info('`transform_outliers` has started')
+    df = pd.read_csv(input_path)
+    df.columns = map(str.lower, df.columns)
+
+    features = {**LABEVENTS_FEATURES, **CHARTEVENTS_FEATURES}
+    for feature in features.keys():
+        upper_bound = df[feature].mean() + 6 * df[feature].std()
+        lower_bound = df[feature].mean() - 6 * df[feature].std()
+        logger.info(f'Feature={feature} upper bound={upper_bound}')
+        logger.info(f'Feature={feature} lower bound={lower_bound}')
+
+        upper_mask = df[feature] > upper_bound
+        lower_mask = df[feature] < lower_bound
+        upper_ids = pd.unique(df.loc[upper_mask, 'icustay_id'])
+        lower_ids = pd.unique(df.loc[lower_mask, 'icustay_id'])
+
+        if len(upper_ids) > 0:
+            # rescale values to the upper bound
+            logger.info(f'Feature={feature}, {upper_ids} contains +outliers')
+            df.loc[upper_mask, feature] = upper_bound
+
+        if len(lower_ids) > 0:
+            # rescale values to the lower bound
+            logger.info(f'Feature={feature}, {lower_ids} contains -outliers')
+            df.loc[lower_mask, feature] = lower_bound
+
+    # save result
+    df.to_csv(output_path, index=False)
+    logger.info('`transform_outliers` has ended')
+
+
 def extract_dataset(output_dir='dataset', redo=False):
     # create output dir if it does not exist
     output_dir = Path(output_dir)
@@ -385,9 +417,15 @@ def extract_dataset(output_dir='dataset', redo=False):
 
     # add AKI labels
     ipath = opath
-    opath = output_dir / 'events_complete.csv'
+    opath = output_dir / 'events_with_labels.csv'
     if redo or not opath.exists():
         add_aki_labels(ipath, opath)
+
+    # get rid of outliers
+    ipath = opath
+    opath = output_dir / 'events_complete.csv'
+    if redo or not opath.exists():
+        transform_outliers(ipath, opath)
 
 
 if __name__ == '__main__':
