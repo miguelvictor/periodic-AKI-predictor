@@ -1,25 +1,32 @@
-from .layers import Attention
-from .utils import create_attention_mask
-
-import tensorflow as tf
-import numpy as np
+import torch
+import torch.nn as nn
 
 
-class AkiLstm(tf.keras.Model):
-    def __init__(self, n_features=16, timesteps=48, **kwargs):
-        super().__init__(**kwargs)
-        self.attn = Attention(timesteps=timesteps)
-        self.masking = tf.keras.layers.Masking(mask_value=0)
-        self.lstm = tf.keras.layers.LSTM(256, return_sequences=True)
-        self.dist = tf.keras.layers.TimeDistributed(
-            tf.keras.layers.Dense(1, activation='sigmoid')
-        )
+class AkiLstm(nn.Module):
+    def __init__(self, n_features=16, timesteps=8, hidden_dim=256):
+        super(AkiLstm, self).__init__()
 
-    def call(self, x, training=False):
-        mask = create_attention_mask(x)
-        x, w = self.attn(x, mask=mask, training=training)
-        x = self.masking(x)
-        x = self.lstm(x)
-        x = self.dist(x)
+        self.n_features = n_features
+        self.timesteps = timesteps
 
-        return x, w
+        self.norm = nn.LayerNorm(timesteps, n_features)
+        self.lstm = nn.LSTM(n_features, hidden_dim, batch_first=True)
+        self.proj = nn.Linear(hidden_dim, 1)
+
+    def forward(self, x):
+        # input sanity check
+        assert len(x.shape) == 3, 'Input of the model should be a 3D Tensor'
+        _, timesteps, n_features = x.shape
+        assert self.timesteps == timesteps, 'Input timesteps axis is invalid'
+        assert self.n_features == n_features, 'Input n_features axis is invalid'
+
+        x_lengths = x.byte().any(dim=-1).sum(dim=-1)
+        x = nn.utils.rnn.pack_padded_sequence(
+            x, x_lengths, batch_first=True, enforce_sorted=False)
+        x, _ = self.lstm(x)  # TODO: reinit hidden states every after epoch
+        x, _ = nn.utils.rnn.pad_packed_sequence(x, batch_first=True)
+
+        x = self.proj(x)
+        x = torch.sigmoid(x)
+
+        return x
