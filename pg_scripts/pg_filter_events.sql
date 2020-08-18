@@ -1,13 +1,14 @@
 select
     l.subject_id,
     l.hadm_id,
-    i.icustay_id,
+    i.stay_id,
     l.itemid,
     l.charttime,
     l.valuenum,
     l.valueuom
-from labevents l inner join icustays i on 
-    l.subject_id = i.subject_id
+from `physionet-data.mimic_hosp.labevents` l 
+    inner join `physionet-data.mimic_icu.icustays` i 
+    on l.subject_id = i.subject_id
     and l.hadm_id = i.hadm_id
     and l.charttime >= i.intime
     and l.charttime <= i.outtime
@@ -32,13 +33,14 @@ union all
 select 
     c.subject_id,
     c.hadm_id,
-    c.icustay_id,
+    c.stay_id,
     c.itemid,
     c.charttime,
     c.valuenum,
     c.valueuom
-from chartevents c inner join icustays i on 
-    c.icustay_id = i.icustay_id
+from `physionet-data.mimic_icu.chartevents` c 
+    inner join `physionet-data.mimic_icu.icustays` i 
+    on c.stay_id = i.stay_id
 where itemid IN (
         226707, -- height (inches)
         226730, -- height (cm)
