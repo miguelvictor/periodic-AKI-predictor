@@ -113,12 +113,16 @@ def train_models(
             optimizer.step()
 
             # compute accuracy and roc_auc_score for the current batch
-            # to be displayed when the current epoch ends
-            # making sure it is done under no_grad
+            # to be displayed when the current epoch ends.
+            # sklearn utility functions operates on tensors on cpu
+            # so they are moved as necessary.
             with torch.no_grad():
+                masked_y = y[mask].cpu()
+                masked_y_hat = y_hat[mask].cpu()
+
                 batch_loss = loss.item()
-                batch_acc = accuracy_score(y[mask], torch.round(y_hat[mask]))
-                batch_score = roc_auc_score(y[mask], y_hat[mask])
+                batch_acc = accuracy_score(masked_y, torch.round(masked_y_hat))
+                batch_score = roc_auc_score(masked_y, masked_y_hat)
 
                 e_losses.append(batch_loss)
                 e_accs.append(batch_acc)
@@ -131,12 +135,21 @@ def train_models(
 
         # compute statistics with respect to the validation set
         with torch.no_grad():
+            # set model to evaluation mode
+            # move validation set to GPU (if available)
             model.eval()
+            val_x, val_y = val_x.to(device), val_y.to(device)
+
+            # predict and compute loss
             val_y_hat = model(val_x)
             mask = get_mask_for(val_x)
             val_loss = loss_obj(val_y_hat[mask], val_y[mask]).item()
-            val_acc = accuracy_score(val_y[mask], torch.round(val_y_hat[mask]))
-            val_score = roc_auc_score(val_y[mask], val_y_hat[mask])
+
+            masked_y = val_y[mask].cpu()
+            masked_y_hat = val_y_hat[mask].cpu()
+
+            val_acc = accuracy_score(masked_y, torch.round(masked_y_hat))
+            val_score = roc_auc_score(masked_y, masked_y_hat)
 
         # write training statistics to tensorboard summary writer
         # for later visualization
