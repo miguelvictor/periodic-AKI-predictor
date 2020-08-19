@@ -153,9 +153,9 @@ def train_models(
 
             # convert y and y_hat into 1d array that contains
             # only the last day prediction
-            val_y, val_y_hat = convert_preds(val_x, val_y, val_y_hat)
-            val_acc = accuracy_score(val_y, torch.round(val_y_hat))
-            val_score = roc_auc_score(val_y, val_y_hat)
+            y, y_hat = convert_preds(val_x, val_y, val_y_hat)
+            val_acc = accuracy_score(y, torch.round(y_hat))
+            val_score = roc_auc_score(y, y_hat)
 
         # write training statistics to tensorboard summary writer
         # for later visualization
