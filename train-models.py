@@ -57,6 +57,10 @@ def train_models(
     optimizer = optim.Adam(model.parameters(), lr=0.001)
     loss_obj = torch.nn.BCELoss(reduction='mean')
 
+    # print model's architecture
+    logger.info('Using model architecture:')
+    logger.info(str(model))
+
     for i in range(1, epochs+1):
         e_losses = []
         e_accs = []
