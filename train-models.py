@@ -29,9 +29,10 @@ torch.manual_seed(7)
 def train_models(
     epochs: int = 1,
     batch_size: int = 256,
-    dataset_dir='dataset',
-    training='matrix_training.npy',
-    validation='matrix_validation.npy',
+    dataset_dir: str = 'dataset',
+    checkpoint_path: str = 'saved_models',
+    training: str = 'matrix_training.npy',
+    validation: str = 'matrix_validation.npy',
 ):
     dataset_dir = Path(dataset_dir)
     training_path = dataset_dir / training
@@ -103,16 +104,19 @@ def train_models(
             val_acc = accuracy_score(val_y[mask], torch.round(val_y_hat[mask]))
             val_score = roc_auc_score(val_y[mask], val_y_hat[mask])
 
-        print(
-            f'acc={train_acc:.4f} val_acc={val_acc:.4f} ' +
-            f'roc_auc_score={train_score:.4f} val_roc_auc_score={val_score:.4f} ' +
+        stats_str = f'acc={train_acc:.4f} val_acc={val_acc:.4f} ' + \
+            f'roc_auc_score={train_score:.4f} val_roc_auc_score={val_score:.4f} ' + \
             f'loss={train_loss:.4f} val_loss={val_loss:.4f}'
-        )
-        logger.info(
-            f'Epoch {i}/{epochs}: acc={train_acc:.4f} val_acc={val_acc:.4f} ' +
-            f'roc_auc_score={train_score:.4f} val_roc_auc_score={val_score:.4f} ' +
-            f'loss={train_loss:.4f} val_loss={val_loss:.4f}'
-        )
+        print(stats_str)
+        logger.info(f'Epoch {i}/{epochs}: {stats_str}')
+
+    # ensure checkpoint directory exists
+    checkpoint_path = Path(checkpoint_path)
+    checkpoint_path.mkdir(parents=False, exist_ok=True)
+
+    # save model for later use
+    model_path = checkpoint_path / f'e{epochs}_lstm.pt'
+    torch.save(model.state_dict(), model_path)
 
 
 def get_mask_for(x):
