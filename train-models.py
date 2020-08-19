@@ -59,12 +59,20 @@ def train_models(
         shuffle=True, num_workers=4
     )
 
+    # check CUDA availability
+    # use it if it is available, warn if absent
+    is_available = torch.cuda.is_available()
+    device = torch.device('cuda' if is_available else 'cpu')
+    if not is_available:
+        logger.warning('CUDA is not available. Training will be slow.')
+
     # configure summary writer for tensorboard visualization
     # this outputs to ./runs/ directory by default
-    writer = SummaryWriter(comment=f'_e{epochs}_lr{lr}')
+    writer = SummaryWriter(comment=f'_e{epochs}_lr{lr:.0e}')
 
     # define model architecture and hyperparameters
     model = AkiLstm(timesteps=8, n_features=16, n_layers=2)
+    model.to(device)
     optimizer = optim.Adam(model.parameters(), lr=lr)
     loss_obj = torch.nn.BCELoss(reduction='mean')
 
@@ -87,6 +95,9 @@ def train_models(
 
         # start of model training (per batch)
         for x, y in pbar:
+            # transfer current batch to GPU
+            x, y = x.to(device), y.to(device)
+
             # set model to training mode
             # also, zero out gradient buffers
             model.train()
@@ -149,7 +160,7 @@ def train_models(
     checkpoint_path.mkdir(parents=False, exist_ok=True)
 
     # save model for later use
-    model_path = checkpoint_path / f'e{epochs}_lstm.pt'
+    model_path = checkpoint_path / f'e{epochs}_lr{lr:.0e}_lstm.pt'
     torch.save(model.state_dict(), model_path)
 
 
