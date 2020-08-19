@@ -4,6 +4,7 @@ from pathlib import Path
 import fire
 import numpy as np
 import pandas as pd
+import random
 
 TIMESTEPS = 8
 N_FEATURES = 16
@@ -40,37 +41,35 @@ def oversample(name: str = 'events_complete.csv', dataset_dir: str = 'dataset'):
 
     # compute each ICU stay's positive count
     counter, count_reversed = get_statistics(matrix)
+    _, max_len = counter.most_common(1)[0]
 
-    # balance 0 and 7
-    assert counter[0] > counter[7]
-    multiplier, remainder = divmod(counter[0] - counter[7], counter[7])
-    indices = count_reversed[7] * multiplier + count_reversed[7][:remainder]
-    assert matrix[indices].shape[0] == counter[0] - counter[7]
-    matrix = np.vstack([matrix, matrix[indices]])
+    # balance 1, 2, 3, 4, 5, 6, 7
+    for i in range(1, TIMESTEPS):
+        indices = duplicate(count_reversed[i], f=counter[i], t=max_len)
+        count_reversed[i].extend(indices)
 
-    # balance 1 and 6
-    assert counter[1] > counter[6]
-    multiplier, remainder = divmod(counter[1] - counter[6], counter[6])
-    indices = count_reversed[6] * multiplier + count_reversed[6][:remainder]
-    assert matrix[indices].shape[0] == counter[1] - counter[6]
-    matrix = np.vstack([matrix, matrix[indices]])
+    # after balancing, all labels should have the same length
+    # shuffle the indices in preparation for splits
+    for k in count_reversed.keys():
+        assert len(count_reversed[k]) == max_len
+        random.shuffle(count_reversed[k])
 
-    # balance 2 and 5
-    assert counter[2] > counter[5]
-    multiplier, remainder = divmod(counter[2] - counter[5], counter[5])
-    indices = count_reversed[5] * multiplier + count_reversed[5][:remainder]
-    assert matrix[indices].shape[0] == counter[2] - counter[5]
-    matrix = np.vstack([matrix, matrix[indices]])
+    train_indices = []
+    validation_indices = []
+    test_indices = []
+    train_end = int(max_len * .8)
+    validation_end = int(max_len * .9)
 
-    # balance 3 and 4
-    assert counter[3] > counter[4]
-    multiplier, remainder = divmod(counter[3] - counter[4], counter[4])
-    indices = count_reversed[4] * multiplier + count_reversed[4][:remainder]
-    assert matrix[indices].shape[0] == counter[3] - counter[4]
-    matrix = np.vstack([matrix, matrix[indices]])
+    for i in range(TIMESTEPS):
+        indices = count_reversed[i]
+        train_indices.extend(indices[:train_end])
+        validation_indices.extend(indices[train_end:validation_end])
+        test_indices.extend(indices[validation_end:])
 
-    # save resulting matrix
-    np.save('events_oversampled', matrix)
+    # save resulting matrices
+    np.save(dataset_dir / 'matrix_training', matrix[train_indices])
+    np.save(dataset_dir / 'matrix_validation', matrix[validation_indices])
+    np.save(dataset_dir / 'matrix_testing', matrix[test_indices])
 
 
 def padding(group):
@@ -98,6 +97,14 @@ def get_statistics(matrix):
             p_count_reversed[count].append(i)
 
     return counter, p_count_reversed
+
+
+def duplicate(indices, f=0, t=0):
+    assert t > f
+    quotient, remainder = divmod(t - f, f)
+    indices = indices * quotient + indices[:remainder]
+    assert len(indices) == t - f
+    return indices
 
 
 if __name__ == '__main__':
