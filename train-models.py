@@ -1,5 +1,6 @@
 from pathlib import Path
 from predictor.models import AkiLstm
+from predictor.utils import get_mask_for, convert_preds
 from sklearn.metrics import roc_auc_score, accuracy_score
 from torch.utils.data import DataLoader, TensorDataset
 from torch.utils.tensorboard import SummaryWriter
@@ -25,6 +26,10 @@ logger = logging.getLogger('default')
 # set random seed (for reproducibility)
 np.random.seed(7)
 torch.manual_seed(7)
+
+# constants
+TIMESTEPS = 8
+N_FEATURES = 16
 
 
 def train_models(
@@ -71,7 +76,7 @@ def train_models(
     writer = SummaryWriter(comment=f'_e{epochs}_lr{lr:.0e}')
 
     # define model architecture and hyperparameters
-    model = AkiLstm(timesteps=8, n_features=16, n_layers=2)
+    model = AkiLstm(timesteps=TIMESTEPS, n_features=N_FEATURES, n_layers=2)
     model.to(device)
     optimizer = optim.Adam(model.parameters(), lr=lr)
     loss_obj = torch.nn.BCELoss(reduction='mean')
@@ -117,12 +122,13 @@ def train_models(
             # sklearn utility functions operates on tensors on cpu
             # so they are moved as necessary.
             with torch.no_grad():
-                masked_y = y[mask].cpu()
-                masked_y_hat = y_hat[mask].cpu()
+                # convert y and y_hat into 1d array that contains
+                # only the last day prediction
+                y, y_hat = convert_preds(x, y, y_hat)
 
                 batch_loss = loss.item()
-                batch_acc = accuracy_score(masked_y, torch.round(masked_y_hat))
-                batch_score = roc_auc_score(masked_y, masked_y_hat)
+                batch_acc = accuracy_score(y, torch.round(y_hat))
+                batch_score = roc_auc_score(y, y_hat)
 
                 e_losses.append(batch_loss)
                 e_accs.append(batch_acc)
@@ -145,11 +151,11 @@ def train_models(
             mask = get_mask_for(val_x)
             val_loss = loss_obj(val_y_hat[mask], val_y[mask]).item()
 
-            masked_y = val_y[mask].cpu()
-            masked_y_hat = val_y_hat[mask].cpu()
-
-            val_acc = accuracy_score(masked_y, torch.round(masked_y_hat))
-            val_score = roc_auc_score(masked_y, masked_y_hat)
+            # convert y and y_hat into 1d array that contains
+            # only the last day prediction
+            val_y, val_y_hat = convert_preds(val_x, val_y, val_y_hat)
+            val_acc = accuracy_score(val_y, torch.round(val_y_hat))
+            val_score = roc_auc_score(val_y, val_y_hat)
 
         # write training statistics to tensorboard summary writer
         # for later visualization
@@ -175,13 +181,6 @@ def train_models(
     # save model for later use
     model_path = checkpoint_path / f'e{epochs}_lr{lr:.0e}_lstm.pt'
     torch.save(model.state_dict(), model_path)
-
-
-def get_mask_for(x):
-    # exclude day 1 and padding days
-    mask = x.byte().any(dim=-1).type(torch.bool)
-    mask[:, 0] = False
-    return mask
 
 
 if __name__ == '__main__':
