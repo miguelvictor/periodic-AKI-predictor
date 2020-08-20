@@ -1,5 +1,6 @@
 from collections import Counter
 from pathlib import Path
+from typing import Dict, List, Tuple
 
 import fire
 import numpy as np
@@ -11,7 +12,8 @@ N_FEATURES = 16
 
 
 def oversample(name: str = 'events_complete.csv', dataset_dir: str = 'dataset'):
-    path = Path(dataset_dir) / name
+    dataset_dir = Path(dataset_dir)
+    path = dataset_dir / name
     if not path.exists():
         raise FileNotFoundError(
             f'{name} does not exist. Run `extract-dataset.py` first')
@@ -19,6 +21,10 @@ def oversample(name: str = 'events_complete.csv', dataset_dir: str = 'dataset'):
     # load input csv
     df = pd.read_csv(path)
     df.columns = map(str.lower, df.columns)
+
+    # get los and corresponding aki label for each ICU stay
+    stats = get_statistics(df)
+    index_mapping = dict(zip(stats.index, range(len(stats))))
 
     # define columns to keep and to discard
     to_discard = ['stay_day', 'stay_id', 'subject_id', 'hadm_id']
@@ -39,40 +45,33 @@ def oversample(name: str = 'events_complete.csv', dataset_dir: str = 'dataset'):
     # and remove unnecessary columns
     matrix = df[columns].values.reshape(-1, TIMESTEPS, N_FEATURES + 1)
 
-    # compute each ICU stay's positive count
-    counter, count_reversed = get_statistics(matrix)
-    _, max_len = counter.most_common(1)[0]
-
-    # balance 1, 2, 3, 4, 5, 6, 7
-    for i in range(1, TIMESTEPS):
-        indices = duplicate(count_reversed[i], f=counter[i], t=max_len)
-        count_reversed[i].extend(indices)
-
-    # after balancing, all labels should have the same length
-    # shuffle the indices in preparation for splits
-    for k in count_reversed.keys():
-        assert len(count_reversed[k]) == max_len
-        random.shuffle(count_reversed[k])
-
+    # balance 2, 3, 4, 5, 6, 7, 8 los
     train_indices = []
-    validation_indices = []
+    val_indices = []
     test_indices = []
-    train_end = int(max_len * .8)
-    validation_end = int(max_len * .9)
+    for los in range(2, TIMESTEPS + 1):
+        i_train, i_val, i_test = split_los_samples(stats, index_mapping, los)
+        train_indices.extend(i_train)
+        val_indices.extend(i_val)
+        test_indices.extend(i_test)
 
-    for i in range(TIMESTEPS):
-        indices = count_reversed[i]
-        train_indices.extend(indices[:train_end])
-        validation_indices.extend(indices[train_end:validation_end])
-        test_indices.extend(indices[validation_end:])
+    # shuffle indices
+    random.shuffle(train_indices)
+    random.shuffle(val_indices)
+    random.shuffle(test_indices)
 
     # save resulting matrices
     np.save(dataset_dir / 'matrix_training', matrix[train_indices])
-    np.save(dataset_dir / 'matrix_validation', matrix[validation_indices])
+    np.save(dataset_dir / 'matrix_validation', matrix[val_indices])
     np.save(dataset_dir / 'matrix_testing', matrix[test_indices])
 
 
-def padding(group):
+def padding(group) -> pd.DataFrame:
+    '''
+    Adds padding to a group so that the resulting dataframe will have
+    a number of rows equal to the timesteps constant. Also, stay_id
+    column is preserved on the padding rows.
+    '''
     n_rows, n_cols = group.shape
     n_rows = TIMESTEPS - n_rows
     padding = np.zeros((n_rows, n_cols))
@@ -81,29 +80,105 @@ def padding(group):
     return pd.concat([group, padding], axis=0)
 
 
-def get_statistics(matrix):
-    # compute the number of positive count for each ICU stay
-    # resulting shape: [n_samples]
-    p_count = np.sum(matrix[:, :, -1], axis=1).astype('int')
-    counter = Counter(p_count)
+def split_los_samples(stats: pd.DataFrame, mapping: Dict[int, int], los: int) -> Tuple[List[int], List[int], List[int]]:
+    '''
+    Takes in `stats` (a dataframe that contains the aki label and los 
+    for each ICU stay) and balances out the samples so that the number of 
+    positive and negative samples is equal for the given los.
+    '''
+    pos = stats[(stats['los'] == los) & (stats['aki'] == 1)]
+    neg = stats[(stats['los'] == los) & (stats['aki'] == 0)]
 
-    # store indices of ICU stays with a certain amount of positive count
-    # to be used for duplication purposes
-    p_count_reversed = {}
-    for i, count in enumerate(p_count):
-        if count not in p_count_reversed:
-            p_count_reversed[count] = [i]
-        else:
-            p_count_reversed[count].append(i)
+    p_train, p_val, p_test = split_indices(pos.index)
+    n_train, n_val, n_test = split_indices(neg.index)
 
-    return counter, p_count_reversed
+    # medical datasets tend to have big dataset imbalance
+    # so we duplicate positive samples to match its count with the negative samples
+    p_train = duplicate(p_train, t=len(n_train))
+    p_val = duplicate(p_val, t=len(n_val))
+    p_test = duplicate(p_test, t=len(n_test))
+
+    return (
+        [mapping[index] for index in p_train + n_train],
+        [mapping[index] for index in p_val + n_val],
+        [mapping[index] for index in p_test + n_test],
+    )
 
 
-def duplicate(indices, f=0, t=0):
+def split_indices(indices: pd.Int64Index) -> Tuple[List[int], List[int], List[int]]:
+    '''
+    Splits the given sample indices into three partitions 
+    (for training, validation, and testing sets).
+    If the sample count is not enough, testing and validation sets are given priority.
+    '''
+    length = len(indices)
+    training = []
+    validation = []
+    testing = []
+
+    # use normal 80%, 10%, 10% split
+    if length >= 10:
+        training_end_index = int(length * .8)
+        validation_end_index = int(length * .9)
+        training.extend(indices[:training_end_index])
+        validation.extend(indices[training_end_index:validation_end_index])
+        testing.extend(indices[validation_end_index:])
+    elif length == 1:
+        testing.append(indices[0])
+    elif length == 2:
+        testing.append(indices[0])
+        validation.append(indices[1])
+    else:
+        testing.append(indices[0])
+        validation.append(indices[1])
+        training.extend(indices[2:])
+
+    return training, validation, testing
+
+
+def get_statistics(df: pd.DataFrame) -> pd.DataFrame:
+    '''
+    Computes the relevant statistics of each ICU stay in the dataframe.
+    It returns a dataframe with an aki label and los for each ICU stay.
+    '''
+    # get the last day predictions of each ICU stays
+    last_day_preds = pd.pivot_table(
+        df,
+        index='stay_id',
+        values='aki',
+        aggfunc=lambda x: x.iloc[-1]
+    )
+
+    # get the length of stay of each ICU stays
+    los = pd.pivot_table(
+        df,
+        index='stay_id',
+        values='aki',
+        aggfunc=len
+    )
+
+    aki_los = pd.concat([last_day_preds, los], axis=1)
+    aki_los.columns = ['aki', 'los']
+    aki_los['aki'] = aki_los['aki'].astype('int')
+
+    return aki_los
+
+
+def duplicate(indices: List[int], t: int = 0) -> List[int]:
+    '''
+    Duplicates the contents of indices so that its length
+    will be equal to `t`. However, if indices is empty, then
+    an empty list is also returned.
+    '''
+    f = len(indices)
+    if f == 0:
+        return []
+
     assert t > f
-    quotient, remainder = divmod(t - f, f)
+    quotient, remainder = divmod(t, f)
     indices = indices * quotient + indices[:remainder]
-    assert len(indices) == t - f
+
+    assert len(indices) == t
     return indices
 
 
