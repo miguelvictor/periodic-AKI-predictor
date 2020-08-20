@@ -36,7 +36,7 @@ def evaluate(
     model.eval()
 
     with torch.no_grad():
-        y_hat = model(x)
+        y_hat, _ = model(x)
         y, y_hat = convert_preds(x, y, y_hat)
 
         cm = confusion_matrix(y, torch.round(y_hat))

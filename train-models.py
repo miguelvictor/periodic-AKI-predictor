@@ -109,7 +109,7 @@ def train_models(
             model.zero_grad()
 
             # compute loss
-            y_hat = model(x)
+            y_hat, _ = model(x)
             mask = get_mask_for(x)
             loss = loss_obj(y_hat[mask], y[mask])
 
@@ -147,7 +147,7 @@ def train_models(
             val_x, val_y = val_x.to(device), val_y.to(device)
 
             # predict and compute loss
-            val_y_hat = model(val_x)
+            val_y_hat, _ = model(val_x)
             mask = get_mask_for(val_x)
             val_loss = loss_obj(val_y_hat[mask], val_y[mask]).item()
 
