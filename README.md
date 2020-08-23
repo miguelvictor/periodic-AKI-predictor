@@ -22,7 +22,7 @@ The dataset preprocessing part consists of 5 major parts:
 
 3. `add_patient_info` adds patient's demographics data (age, gender, and ethnicity).
 
-4. `add_aki_labels` adds the appropriate next-day AKI labels except ICU stays with AKI detected for the first 2 days (since they are dropped). The AKI definition used in this project is the KDIGO criteria which is detailed [here](https://kdigo.org/wp-content/uploads/2016/10/KDIGO-2012-AKI-Guideline-English.pdf). Due to the lack of urine output data in MIMIC4 dataset, only the first two criteria are used:
+4. `add_aki_labels` adds the appropriate next-day AKI labels except ICU stays with AKI detected for the first 2 days (since they are dropped). The AKI definition used in this project is the KDIGO criteria which is detailed [here](https://kdigo.org/wp-content/uploads/2016/10/KDIGO-2012-AKI-Guideline-English.pdf). Also, Patients with age less than 20 years old are also dropped (since KDIGO criteria doesn't have a baseline for persons with age < 20 years old). Due to the lack of urine output data in MIMIC4 dataset, only the first two criteria are used:
 
    > Increase in SCr by >= 0.3 mg/dl (>= 26.5 lmol/l) within 48 hours; or
 
@@ -35,3 +35,15 @@ $$
 \text{upper bound} = \mu + 6\sigma\\
 \text{where}\ \mu\ \text{and}\ \sigma\ \text{is the mean and std respectively}
 $$
+
+## Oversampling methods
+
+Since the [dataset](https://github.com/miggymigz/periodic-AKI-predictor/blob/master/dataset-visualization.ipynb) is highly imbalanced, two methods are considered in this work: oversampling by duplicating and using Generative Adversarial Networks (GAN) to generate synthetic data for the minority class (courtesy of [this paper](https://arxiv.org/pdf/1901.02514.pdf)).
+
+## Evaluation Metrics
+
+The primary evaluation metric used in this project is the ROC AUC score since it is a standard technique for summarizing classifier performance over a range of tradeoffs between true positive and false positive error rates. In addition to this, accuracy, precision, recall and f1-score (using a threshold of 0.5; uses `np.around` in the code) are also added to give a rough sense of the overall model performance.
+
+To calculate the mentioned metrics, instead of comparing all of the model's predictions to the ground truth, only the last day prediction is compared to the last day's ground truth. This is analogous to text generation models (like GPT-2) in which we can see the model's performance with its next token prediction (the next token is the most probable token given the previous tokens; in this work, this can be interpreted as what is the next-day AKI probability of the patient given the previous days' data).
+
+In addition to the above mentioned metrics, the accuracy of the model's ability to predict AKI in advance (2-day window) is also considered. This metric makes sense since the goal of this paper is early prediction of AKI which has the potential to save the lives of patients in ICU.

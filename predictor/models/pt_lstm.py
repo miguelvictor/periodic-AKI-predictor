@@ -49,7 +49,7 @@ class AkiLstm(nn.Module):
             x, x_lengths, batch_first=True, enforce_sorted=False)
 
         # go through LSTM and unpack results
-        x, _ = self.lstm(x)  # TODO: reinit hidden states every after epoch
+        x, _ = self.lstm(x)
         x, _ = nn.utils.rnn.pad_packed_sequence(x, batch_first=True)
 
         # project results into a prediction

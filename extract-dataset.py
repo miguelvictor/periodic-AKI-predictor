@@ -240,6 +240,13 @@ def add_aki_labels(input_path, output_path):
         scr = df[stay_id_mask]['creatinine'].values
         diffs = scr[1:] - scr[:-1]
 
+        # drop patients with age < 20
+        # since KDIGO criteria doesn't have an Scr baseline for them
+        if age < 20:
+            logger.warning(f'ICU stay id={stay_id} age < 20 (dropped)')
+            df = df[~stay_id_mask]
+            continue
+
         # drop ICU stays with AKIs for the first 48 hours
         if (
             has_aki(diff=diffs[0])
