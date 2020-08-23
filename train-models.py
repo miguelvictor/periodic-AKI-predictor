@@ -1,10 +1,12 @@
 from pathlib import Path
-from predictor.models import AkiLstm
-from predictor.utils import get_mask_for, convert_preds
 from sklearn.metrics import roc_auc_score, accuracy_score
 from torch.utils.data import DataLoader, TensorDataset
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
+
+from predictor.models import AkiLstm, AkiGpt2
+from predictor.utils import get_mask_for, convert_preds
+from predictor.training_args import TrainingArgs
 
 import fire
 import logging
@@ -35,33 +37,60 @@ N_FEATURES = 16
 def train_models(
     epochs: int = 1,
     batch_size: int = 256,
-    lr: int = 0.0001,
+    lr: float = 0.0001,
+    n_lstm_layers: int = 2,
+    n_gpt2_layers: int = 1,
     dataset_dir: str = 'dataset',
-    checkpoint_path: str = 'saved_models',
+    ckpt_dir: str = 'saved_models',
     training: str = 'matrix_training.npy',
-    validation: str = 'matrix_validation.npy',
+    val: str = 'matrix_validation.npy',
 ):
+    '''
+    Trains 3 models (LSTM, GPT-2 and CNN) to predict next-day AKI.
+
+    Parameters:
+    epochs: For how many epochs we train the models
+    batch_size: The batch size to be used during training (the bigger the better)
+    lr: The learning rate to be used with Adam optimizer
+    n_lstm_layers: The number of LSTM layers to be stacked on top of one another
+    n_gpt2_layers: The number of decoder blocks to be used on the model
+    dataset_dir: The name of the directory which should contain the 
+        training and validation datasets
+    ckpt_dir: The name of the directory which the serialized weights of the
+        trained models are saved.
+    training: The training dataset to be used (should be a file serialized using 
+        np.save and with a shape of [n_samples, timesteps, n_features + 1]
+        where 1 stands for the AKI prediction labels)
+    val: The validation dataset to be used (should be a file serialized using 
+        np.save and with a shape of [n_samples, timesteps, n_features + 1]
+        where 1 stands for the AKI prediction labels)
+    '''
     # verify training and validation data exist
     dataset_dir = Path(dataset_dir)
-    training_path = dataset_dir / training
-    val_path = dataset_dir / validation
-    assert training_path.exists(), f'{training} does not exist'
-    assert val_path.exists(), f'{validation} does not exist'
+    train_path = dataset_dir / training
+    val_path = dataset_dir / val
+    assert train_path.exists(), f'{train} does not exist'
+    assert val_path.exists(), f'{val} does not exist'
 
     # load training and validation data
     # also, separate the labels from the matrix
-    training_matrix = np.load(training_path)
-    training_x = torch.tensor(training_matrix[:, :, :-1], dtype=torch.float32)
-    training_y = torch.tensor(training_matrix[:, :, -1:], dtype=torch.float32)
+    train_matrix = np.load(train_path)
+    train_x = torch.tensor(train_matrix[:, :, :-1], dtype=torch.float32)
+    train_y = torch.tensor(train_matrix[:, :, -1:], dtype=torch.float32)
     val_matrix = np.load(val_path)
     val_x = torch.tensor(val_matrix[:, :, :-1], dtype=torch.float32)
     val_y = torch.tensor(val_matrix[:, :, -1:], dtype=torch.float32)
 
     # create a dataset out of the loaded tensors
-    dataset = TensorDataset(training_x, training_y)
-    dataloader = DataLoader(
-        dataset, batch_size=batch_size,
-        shuffle=True, num_workers=4
+    train_dataset = TensorDataset(train_x, train_y)
+    val_dataset = TensorDataset(val_x, val_y)
+    train_dl = DataLoader(
+        train_dataset, batch_size=batch_size,
+        shuffle=True, num_workers=4,
+    )
+    val_dl = DataLoader(
+        val_dataset, batch_size=batch_size,
+        shuffle=True, num_workers=4,
     )
 
     # check CUDA availability
@@ -71,12 +100,41 @@ def train_models(
     if not is_available:
         logger.warning('CUDA is not available. Training will be slow.')
 
+    # create training args
+    args = TrainingArgs(
+        epochs=epochs,
+        lr=lr,
+        train_dl=train_dl,
+        val_dl=val_dl,
+        device=device,
+        ckpt_dir=Path(ckpt_dir),
+    )
+
+    # train LSTM (baseline model)
+    args.n_layers = n_lstm_layers
+    train('lstm', args)
+
+    # train GPT-2
+    args.n_layers = n_gpt2_layers
+    train('gpt2', args)
+
+
+def train(name: str, args: TrainingArgs):
+    # extract training arguments
+    epochs = args.epochs
+    lr = args.lr
+    n_layers = args.n_layers
+    device = args.device
+    train_dl = args.train_dl
+    val_dl = args.val_dl
+    ckpt_dir = args.ckpt_dir
+
     # configure summary writer for tensorboard visualization
     # this outputs to ./runs/ directory by default
-    writer = SummaryWriter(comment=f'_e{epochs}_lr{lr:.0e}')
+    writer = get_summary_writer(name=name, epochs=epochs, lr=lr)
 
     # define model architecture and hyperparameters
-    model = AkiLstm(timesteps=TIMESTEPS, n_features=N_FEATURES, n_layers=2)
+    model = get_model(name=name, n_layers=n_layers)
     model.to(device)
     optimizer = optim.Adam(model.parameters(), lr=lr)
     loss_obj = torch.nn.BCELoss(reduction='mean')
@@ -87,15 +145,15 @@ def train_models(
     logger.info(str(model))
 
     # start of model training
-    for i in range(1, epochs+1):
+    for i in range(1, epochs + 1):
         # accumulate loss, accuracy, and roc-auc-score
-        # for every batch of training
+        # for every batch in the training set
         e_losses = []
         e_accs = []
         e_scores = []
 
         # use a fancy progressbar to track progress of training
-        pbar = tqdm(dataloader)
+        pbar = tqdm(train_dl)
         pbar.set_description(f'Epoch {i}/{epochs}')
 
         # start of model training (per batch)
@@ -142,20 +200,37 @@ def train_models(
         # compute statistics with respect to the validation set
         with torch.no_grad():
             # set model to evaluation mode
-            # move validation set to GPU (if available)
             model.eval()
-            val_x, val_y = val_x.to(device), val_y.to(device)
 
-            # predict and compute loss
-            val_y_hat, _ = model(val_x)
-            mask = get_mask_for(val_x)
-            val_loss = loss_obj(val_y_hat[mask], val_y[mask]).item()
+            # accumulate loss, accuracy, and roc-auc-score
+            # for every batch in the validation set
+            val_losses = []
+            val_accs = []
+            val_scores = []
 
-            # convert y and y_hat into 1d array that contains
-            # only the last day prediction
-            y, y_hat = convert_preds(val_x, val_y, val_y_hat)
-            val_acc = accuracy_score(y, torch.round(y_hat))
-            val_score = roc_auc_score(y, y_hat)
+            for val_x, val_y in val_dl:
+                # move validation set to GPU (if available)
+                val_x, val_y = val_x.to(device), val_y.to(device)
+
+                # predict and compute loss
+                val_y_hat, _ = model(val_x)
+                mask = get_mask_for(val_x)
+                val_loss = loss_obj(val_y_hat[mask], val_y[mask]).item()
+
+                # convert y and y_hat into 1d array that contains
+                # only the last day prediction
+                y, y_hat = convert_preds(val_x, val_y, val_y_hat)
+                val_acc = accuracy_score(y, torch.round(y_hat))
+                val_score = roc_auc_score(y, y_hat)
+
+                val_losses.append(val_loss)
+                val_accs.append(val_acc)
+                val_scores.append(val_score)
+
+            # average evaluation metrics
+            val_loss = torch.tensor(val_losses).mean()
+            val_acc = torch.tensor(val_accs).mean()
+            val_score = torch.tensor(val_scores).mean()
 
         # write training statistics to tensorboard summary writer
         # for later visualization
@@ -174,13 +249,40 @@ def train_models(
         print(stats_str)
         logger.info(f'Epoch {i}/{epochs}: {stats_str}')
 
-    # ensure checkpoint directory exists
-    checkpoint_path = Path(checkpoint_path)
-    checkpoint_path.mkdir(parents=False, exist_ok=True)
-
     # save model for later use
-    model_path = checkpoint_path / f'e{epochs}_lr{lr:.0e}_lstm.pt'
+    # ensure checkpoint directory exists
+    ckpt_dir.mkdir(parents=False, exist_ok=True)
+    model_path = ckpt_dir / f'{name}_e{epochs}_lr{lr:.0e}_lstm.pt'
     torch.save(model.state_dict(), model_path)
+
+
+def get_model(*, name: str, n_layers: int):
+    if name == 'lstm':
+        return AkiLstm(
+            timesteps=TIMESTEPS,
+            n_features=N_FEATURES,
+            n_layers=n_layers,
+        )
+
+    if name == 'gpt2':
+        return AkiGpt2(
+            timesteps=TIMESTEPS,
+            n_features=N_FEATURES,
+            n_heads=2,
+            n_layers=n_layers,
+        )
+
+    raise AssertionError(f'Unknown model "{name}"')
+
+
+def get_summary_writer(*, name: str, epochs: int, lr: float):
+    '''
+    Creates the summary writer for the given model.
+    The parameters are used to distinguish the output events file.
+    The events file will be placed in the `runs` directory by default.
+    '''
+    comment = f'_{name}_e{epochs}_lr{lr:.0e}'
+    return SummaryWriter(comment=comment)
 
 
 if __name__ == '__main__':
