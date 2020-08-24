@@ -368,8 +368,10 @@ def transform_outliers(input_path, output_path):
 
     features = {**LABEVENTS_FEATURES, **CHARTEVENTS_FEATURES}
     for feature in features.keys():
-        upper_bound = df[feature].mean() + 6 * df[feature].std()
-        lower_bound = df[feature].mean() - 6 * df[feature].std()
+        # there are some bizarre values (e.g., negative person weights)
+        # most likely due to typos, so we correct them here
+        upper_bound = df[feature].quantile(.99)
+        lower_bound = df[feature].quantile(.01)
         logger.info(f'Feature={feature} upper bound={upper_bound}')
         logger.info(f'Feature={feature} lower bound={lower_bound}')
 
