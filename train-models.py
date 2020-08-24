@@ -131,7 +131,7 @@ def train(name: str, args: TrainingArgs):
 
     # configure summary writer for tensorboard visualization
     # this outputs to ./runs/ directory by default
-    writer = get_summary_writer(name=name, epochs=epochs, lr=lr)
+    writer = get_summary_writer(name=name, epochs=epochs, n_layers=n_layers)
 
     # define model architecture and hyperparameters
     model = get_model(name=name, n_layers=n_layers)
@@ -252,7 +252,7 @@ def train(name: str, args: TrainingArgs):
     # save model for later use
     # ensure checkpoint directory exists
     ckpt_dir.mkdir(parents=False, exist_ok=True)
-    model_path = ckpt_dir / f'{name}_e{epochs}_lr{lr:.0e}_lstm.pt'
+    model_path = ckpt_dir / f'{name}_e{epochs}_l{n_layers}.pt'
     torch.save(model.state_dict(), model_path)
 
 
@@ -275,13 +275,13 @@ def get_model(*, name: str, n_layers: int):
     raise AssertionError(f'Unknown model "{name}"')
 
 
-def get_summary_writer(*, name: str, epochs: int, lr: float):
+def get_summary_writer(*, name: str, epochs: int, n_layers: int):
     '''
     Creates the summary writer for the given model.
     The parameters are used to distinguish the output events file.
     The events file will be placed in the `runs` directory by default.
     '''
-    comment = f'_{name}_e{epochs}_lr{lr:.0e}'
+    comment = f'_{name}_e{epochs}_l{n_layers}'
     return SummaryWriter(comment=comment)
 
 
