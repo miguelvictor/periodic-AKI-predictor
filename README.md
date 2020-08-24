@@ -28,13 +28,7 @@ The dataset preprocessing part consists of 5 major parts:
 
    > Increase in SCr to >= 1.5 times baseline, which is known or presumed to have occurred within the prior 7 days
 
-5. `transform_outliers` checks the minimum and maximum values of each of the features to check if they're valid or not (MIMIC4 dataset sometimes contains errors caused by typos). Features with values lower than the lower bound or higher than the upper bound are replaced with the defined lower and upper bound. The lower and upper bound of a feature are defined by the following equations:
-
-$$
-\text{lower bound} = \mu - 6\sigma\\
-\text{upper bound} = \mu + 6\sigma\\
-\text{where}\ \mu\ \text{and}\ \sigma\ \text{is the mean and std respectively}
-$$
+5. `transform_outliers` checks the minimum and maximum values of each of the features to check if they're valid or not (MIMIC4 dataset sometimes contains errors caused by typos). Features with values lower than the lower bound or higher than the upper bound are replaced with the defined lower and upper bound. The lower and upper bound of a feature are the feature values' 1st and 99th percentile respectively.
 
 ## Oversampling methods
 

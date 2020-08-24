@@ -164,11 +164,12 @@ class AkiGpt2(nn.Module):
 
         # create attention mask so that the model won't
         # treat padding days as inputs
-        attn_mask = x.byte().any(dim=-1)[:, None, :, None]
-        attn_mask = (1 - attn_mask) * -1e9
+        attn_mask = x.bool().any(dim=-1)[:, None, :, None]
+        attn_mask = (1 - attn_mask.float()) * -1e9
 
         # add positional encoding
-        position_ids = torch.arange(timesteps, dtype=torch.long)
+        position_ids = torch.arange(
+            timesteps, dtype=torch.long, device=x.device)
         position_ids = position_ids[None, :]
         x = x + self.wpe(position_ids)
         x = self.drop(x)
