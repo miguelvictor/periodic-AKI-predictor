@@ -54,10 +54,8 @@ class Attention(nn.Module):
 
     def _attn(self, q, k, v, attn_mask):
         # q, k, p, v have shape [batch, heads, days, head_features]
-        q = q.permute(0, 1, 3, 2)
         w = torch.matmul(q, k)
-        dk = float(v.size(-1))
-        w = w / dk ** 0.5
+        w = w / (float(v.size(-1)) ** 0.5)
 
         # if only "normal" attention layer implements causal mask
         nd, ns = w.size(-2), w.size(-1)
@@ -65,42 +63,38 @@ class Attention(nn.Module):
         w = torch.where(causal_mask.bool(), w, self.masked_bias.to(w.dtype))
 
         # Apply the attention mask
-        w = torch.matmul(w, v.permute(0, 1, 3, 2)) / dk ** 2
-        w = w.permute(0, 1, 3, 2)
         w = w + attn_mask
-        w = F.softmax(w, dim=-2)
+
+        w = F.softmax(w, dim=-1)
         w = self.attn_dropout(w)
 
-        # Apply attention weights
-        v = w * v
-
         # return outputs and attention weights
-        return v, w
+        return torch.matmul(w, v)
 
     def merge_heads(self, x):
         x = x.permute(0, 2, 1, 3).contiguous()
         new_x_shape = x.size()[:-2] + (x.size(-2) * x.size(-1),)
         return x.view(*new_x_shape)
 
-    def split_heads(self, x):
+    def split_heads(self, x, k=False):
         new_x_shape = x.size()[:-1] + (self.n_heads,
                                        x.size(-1) // self.n_heads)
         x = x.view(*new_x_shape)
-        # (batch, head, seq_length, head_features)
-        return x.permute(0, 2, 1, 3)
+        perm = (0, 2, 3, 1) if k else (0, 2, 1, 3)
+        return x.permute(*perm)
 
     def forward(self, x, mask):
         q, k, v = self.c_attn(x).split(self.n_features, dim=2)
         q = self.split_heads(q)
-        k = self.split_heads(k)
+        k = self.split_heads(k, k=True)
         v = self.split_heads(v)
 
-        a, w = self._attn(q, k, v, mask)
-        a, w = self.merge_heads(a), self.merge_heads(w)
+        a = self._attn(q, k, v, mask)
+        a = self.merge_heads(a)
         a = self.c_proj(a)
         a = self.resid_dropout(a)
 
-        return a, w
+        return a
 
 
 class MLP(nn.Module):
@@ -128,14 +122,14 @@ class Block(nn.Module):
 
     def forward(self, x, mask):
         a = self.ln_1(x)
-        a, w = self.attn(a, mask)
+        a = self.attn(a, mask)
         x = x + a
 
         m = self.ln_2(x)
         m = self.mlp(m)
         x = x + m
 
-        return x, w
+        return x
 
 
 class AkiGpt2(nn.Module):
@@ -146,45 +140,50 @@ class AkiGpt2(nn.Module):
         self.timesteps = timesteps
         self.n_layers = n_layers
 
+        self.input_ln = nn.LayerNorm(n_features)
+        self.attn = nn.Linear(n_features, n_features)
+        self.attn_drop = nn.Dropout(0.1)
         self.wpe = nn.Embedding(timesteps, n_features)
-        self.drop = nn.Dropout(0.1)
         self.h = nn.ModuleList([
             Block(timesteps, n_features, n_heads)
             for _ in range(n_layers)
         ])
         self.ln_f = nn.LayerNorm(n_features)
         self.proj = nn.Linear(n_features, 1)
-        self.proj_drop = nn.Dropout(0.1)
 
     def forward(self, x):
         # sanity check
-        _, timesteps, n_features = x.shape
+        assert len(x.shape) == 3, \
+            f'Input shape should be [batch_size, timesteps, n_features]'
+        batch_size, timesteps, n_features = x.shape
         assert timesteps == self.timesteps
         assert n_features == self.n_features
 
         # create attention mask so that the model won't
         # treat padding days as inputs
-        attn_mask = x.bool().any(dim=-1)[:, None, :, None]
-        attn_mask = (1 - attn_mask.float()) * -1e9
+        attn_mask = x.bool().any(dim=-1)[:, :, None]
+        attn_mask = attn_mask.to(dtype=next(self.parameters()).dtype)
+        attn_mask = (1.0 - attn_mask) * -10000.0
+
+        # normalize feature values
+        # and apply embedding-level attention
+        x = self.input_ln(x)
+        w = F.softmax(self.attn(x) + attn_mask, dim=1)
+        w = self.attn_drop(w)
+        x = x * w
 
         # add positional encoding
         position_ids = torch.arange(
             timesteps, dtype=torch.long, device=x.device)
         position_ids = position_ids[None, :]
         x = x + self.wpe(position_ids)
-        x = self.drop(x)
 
         # feed x to n decoder blocks
-        w = None
+        attn_mask = attn_mask.view(batch_size, -1)[:, None, None, :]
         for block in self.h:
-            x, wb = block(x, attn_mask)
-
-            # only retain the attention weights of the first block
-            if w is None:
-                w = wb
+            x = block(x, attn_mask)
 
         x = self.ln_f(x)
         x = torch.sigmoid(self.proj(x))
-        x = self.proj_drop(x)
 
         return x, w

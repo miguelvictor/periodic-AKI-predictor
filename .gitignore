@@ -4,8 +4,9 @@
 __pycache__
 databases
 dataset
-saved_models
+logs
 runs
+saved_models
 
 *.logs
 *.npy
