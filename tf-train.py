@@ -85,8 +85,17 @@ def train(name: str, training_kwargs, *, ckpt_path: Path, log_path: Path):
     model = get_model(name)
     model.compile(
         optimizer='adam',
-        loss=['binary_crossentropy', None],
-        metrics=[['acc', tf.keras.metrics.AUC()], None],
+        loss=[
+            tf.keras.losses.BinaryCrossentropy(from_logits=False),
+            None,  # output 2 is attn weights (doesn't need to train)
+        ],
+        metrics=[
+            [
+                tf.keras.metrics.Accuracy(name='acc'),
+                tf.keras.metrics.AUC(name='auc'),
+            ],
+            None,  # output 2 is attn weights (doesn't need to measure)
+        ],
     )
 
     # train model with tensorboard callback (for graphing)
