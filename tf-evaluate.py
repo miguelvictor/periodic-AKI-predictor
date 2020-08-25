@@ -1,6 +1,6 @@
 from pathlib import Path
 from predictor.models import TFAkiLstm, TFAkiGpt2
-from predictor.utils import convert_preds
+from predictor.utils import convert_preds, early_prediction_score
 from sklearn.metrics import (
     accuracy_score,
     classification_report,
@@ -46,7 +46,13 @@ def evaluate(
     test_y = test_matrix[:, :, -1:]
 
     for model in get_models(ckpt_dir):
+        # get model's predictions
         y_hat, _ = model(test_x)
+
+        # get model's early prediction score
+        escore, stats = early_prediction_score(test_y, np.around(y_hat))
+
+        # convert predictions to last-day AKI predictions
         y, y_hat = convert_preds(test_x, test_y, y_hat)
 
         cm = confusion_matrix(y, np.around(y_hat))
@@ -57,7 +63,8 @@ def evaluate(
         print(f'\n[INFO] Evaluation Results: {model.__class__.__name__}')
         print(cm)
         print(f'Accuracy: {acc:.4%}')
-        print(f'ROC AUC SCORE: {score:.4%}')
+        print(f'ROC-AUC Score: {score:.4%}')
+        print(f'Early Detection Accuracy: {escore:.4%}, {stats}\n')
         print(report)
         print('=' * 40)
 
@@ -66,7 +73,7 @@ def get_models(ckpt_dir: Path):
     for dname in os.listdir(ckpt_dir):
         # get the model's architecture
         # from the filename of its trained weights
-        architecture, _ = dname.split('_')
+        architecture, _ = dname.split('_', 1)
 
         # load model's trained weights
         model_weights_path = ckpt_dir / dname / architecture
