@@ -91,7 +91,7 @@ def train(name: str, training_kwargs, *, ckpt_path: Path, log_path: Path):
         ],
         metrics=[
             [
-                tf.keras.metrics.Accuracy(name='acc'),
+                'acc',
                 tf.keras.metrics.AUC(name='auc'),
             ],
             None,  # output 2 is attn weights (doesn't need to measure)
