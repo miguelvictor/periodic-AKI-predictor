@@ -72,8 +72,9 @@ def get_models(ckpt_dir: Path):
         model_weights_path = ckpt_dir / dname / architecture
 
         # create model and restore its trained weights
+        # partial is because we don't need the optimizer's state
         model = get_model(architecture)
-        model.load_weights(model_weights_path)
+        model.load_weights(model_weights_path).expect_partial()
         yield model
 
 
@@ -83,7 +84,7 @@ def get_model(architecture: str):
             n_heads=2,
             timesteps=TIMESTEPS,
             n_features=N_FEATURES,
-            n_layers=1,
+            n_layers=32,
         )
 
     if architecture == 'lstm':

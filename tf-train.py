@@ -83,34 +83,39 @@ def train_models(
 
 def train(name: str, training_kwargs, *, ckpt_path: Path, log_path: Path):
     model = get_model(name)
+
+    # we use the default adam optimizer
+    # the loss function and metrics are defined for output 1 (predictions)
+    # None are given to output 2 (since it's just the attn weights)
     model.compile(
         optimizer='adam',
-        loss=[
-            tf.keras.losses.BinaryCrossentropy(from_logits=False),
-            None,  # output 2 is attn weights (doesn't need to train)
-        ],
-        metrics=[
-            [
-                'acc',
-                tf.keras.metrics.AUC(name='auc'),
-            ],
-            None,  # output 2 is attn weights (doesn't need to measure)
-        ],
+        loss=['binary_crossentropy', None],
+        metrics=[['acc', tf.keras.metrics.AUC(name='auc')], None],
+    )
+
+    # setup training callbacks (logging and checkpoints)
+    tb_callback = tf.keras.callbacks.TensorBoard(
+        log_dir=log_path / name,
+        histogram_freq=1,
+    )
+
+    # setup checkpoint callback (only saving the best weights
+    # according to the validation set's ROC AUC score
+    model_name = f'{name}_e{training_kwargs["epochs"]}'
+    model_weights_path = ckpt_path / model_name / name
+    ckpt_callback = tf.keras.callbacks.ModelCheckpoint(
+        model_weights_path,
+        monitor='val_output_1_auc',
+        mode='max',
+        save_best_only=True,
+        save_weights_only=True,
     )
 
     # train model with tensorboard callback (for graphing)
     model.fit(
-        callbacks=[tf.keras.callbacks.TensorBoard(
-            log_dir=log_path / name,
-            histogram_freq=1,
-        )],
+        callbacks=[tb_callback, ckpt_callback],
         **training_kwargs,
     )
-
-    # only save model weights
-    model_name = f'{name}_e{training_kwargs["epochs"]}'
-    model_weights_path = ckpt_path / model_name / name
-    model.save_weights(model_weights_path)
 
 
 def get_model(name: str):
@@ -125,7 +130,7 @@ def get_model(name: str):
             n_heads=2,
             timesteps=TIMESTEPS,
             n_features=N_FEATURES,
-            n_layers=1,
+            n_layers=32,
         )
 
     raise AssertionError(f'Unknown model "{name}"')
