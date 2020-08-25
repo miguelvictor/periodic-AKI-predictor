@@ -72,6 +72,7 @@ def train_models(
         'y': train_y,
         'epochs': epochs,
         'batch_size': batch_size,
+        'shuffle': True,
         'validation_data': (val_x, val_y),
     }
 
@@ -87,8 +88,13 @@ def train(name: str, training_kwargs, *, ckpt_path: Path, log_path: Path):
         loss=['binary_crossentropy', None],
         metrics=[['acc', tf.keras.metrics.AUC()], None],
     )
+
+    # train model with tensorboard callback (for graphing)
     model.fit(
-        callbacks=[tf.keras.callbacks.TensorBoard(log_dir=log_path)],
+        callbacks=[tf.keras.callbacks.TensorBoard(
+            log_dir=log_path / name,
+            histogram_freq=1,
+        )],
         **training_kwargs,
     )
 
