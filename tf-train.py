@@ -97,8 +97,9 @@ def train(name: str, training_kwargs, *, ckpt_path: Path, log_path: Path):
     tb_callback = tf.keras.callbacks.TensorBoard(
         log_dir=log_path / name,
         histogram_freq=1,
-        embeddings_freq=50,
+        write_graph=False,
         profile_batch=0,
+        embeddings_freq=50,
     )
 
     # setup checkpoint callback (only saving the best weights
@@ -108,8 +109,9 @@ def train(name: str, training_kwargs, *, ckpt_path: Path, log_path: Path):
     ckpt_callback = tf.keras.callbacks.ModelCheckpoint(
         model_weights_path,
         monitor='val_output_1_auc',
-        mode='max',
+        verbose=1,
         save_best_only=True,
+        mode='max',
         save_weights_only=True,
     )
 
