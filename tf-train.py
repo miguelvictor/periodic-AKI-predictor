@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from predictor.models import TFAkiLstm, TFAkiGpt2
+from predictor.models import TFAkiBase, TFAkiLstm, TFAkiGpt2
 
 import fire
 import logging
@@ -77,6 +77,7 @@ def train_models(
     }
 
     # train all models
+    train('base', training_kwargs, ckpt_path=ckpt_path, log_path=log_path)
     train('lstm', training_kwargs, ckpt_path=ckpt_path, log_path=log_path)
     train('gpt2', training_kwargs, ckpt_path=ckpt_path, log_path=log_path)
 
@@ -99,7 +100,6 @@ def train(name: str, training_kwargs, *, ckpt_path: Path, log_path: Path):
         histogram_freq=1,
         write_graph=False,
         profile_batch=0,
-        embeddings_freq=50,
     )
 
     # setup checkpoint callback (only saving the best weights
@@ -108,7 +108,7 @@ def train(name: str, training_kwargs, *, ckpt_path: Path, log_path: Path):
     model_weights_path = ckpt_path / model_name / name
     ckpt_callback = tf.keras.callbacks.ModelCheckpoint(
         model_weights_path,
-        monitor='val_output_1_auc',
+        monitor='val_auc' if name == 'base' else 'val_output_1_auc',
         verbose=1,
         save_best_only=True,
         mode='max',
@@ -123,6 +123,9 @@ def train(name: str, training_kwargs, *, ckpt_path: Path, log_path: Path):
 
 
 def get_model(name: str):
+    if name == 'base':
+        return TFAkiBase()
+
     if name == 'lstm':
         return TFAkiLstm(
             timesteps=TIMESTEPS,

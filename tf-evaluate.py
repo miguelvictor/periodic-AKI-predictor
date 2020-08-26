@@ -1,5 +1,5 @@
 from pathlib import Path
-from predictor.models import TFAkiLstm, TFAkiGpt2
+from predictor.models import TFAkiBase, TFAkiLstm, TFAkiGpt2
 from predictor.utils import convert_preds, early_prediction_score
 from sklearn.metrics import (
     accuracy_score,
@@ -11,7 +11,6 @@ from sklearn.metrics import (
 import fire
 import numpy as np
 import os
-import torch
 
 TIMESTEPS = 8
 N_FEATURES = 16
@@ -47,7 +46,8 @@ def evaluate(
 
     for model in get_models(ckpt_dir):
         # get model's predictions
-        y_hat, _ = model(test_x)
+        outputs = model(test_x)
+        y_hat = outputs[0] if isinstance(outputs, tuple) else outputs
 
         # get model's early prediction score
         escore, stats = early_prediction_score(test_y, np.around(y_hat))
@@ -86,6 +86,9 @@ def get_models(ckpt_dir: Path):
 
 
 def get_model(architecture: str):
+    if architecture == 'base':
+        return TFAkiBase()
+
     if architecture == 'gpt2':
         return TFAkiGpt2(
             n_heads=2,
