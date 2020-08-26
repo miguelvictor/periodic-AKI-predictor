@@ -9,34 +9,28 @@ def create_attention_mask(x):
 
 
 class Attention(tf.keras.layers.Layer):
-    def __init__(self, timesteps=16, **kwargs):
+    def __init__(self, n_features=16, **kwargs):
         super().__init__(**kwargs)
 
-        self.proj = tf.keras.layers.Dense(
-            timesteps,
-            activation=None,
-            kernel_initializer=tf.keras.initializers.TruncatedNormal(),
-        )
+        self.proj = tf.keras.layers.Dense(n_features)
         self.drop = tf.keras.layers.Dropout(0.1)
 
     def call(self, x, training=False):
-        w = tf.transpose(x, perm=(0, 2, 1))
-        w = self.proj(w)
+        w = self.proj(x)
         w = self.drop(w, training=training)
-        w = tf.transpose(w, perm=(0, 2, 1))
-        w = tf.add(w, create_attention_mask(x))
-        w = tf.nn.softmax(w, axis=-2)
-        x = tf.add(x, w)
 
-        return x, w
+        mask = create_attention_mask(x)
+        w = tf.nn.softmax(w + mask, axis=-2)
+
+        return tf.multiply(x, w), w
 
 
 class TFAkiLstm(tf.keras.Model):
     def __init__(self, timesteps=8, n_features=16, **kwargs):
         super().__init__(**kwargs)
 
-        self.norm = tf.keras.layers.LayerNormalization()
-        self.attn = Attention(timesteps=timesteps)
+        self.norm = tf.keras.layers.BatchNormalization()
+        self.attn = Attention(n_features)
         self.masking = tf.keras.layers.Masking(mask_value=0)
         self.lstm = tf.keras.layers.LSTM(256, return_sequences=True)
         self.dist = tf.keras.layers.TimeDistributed(
