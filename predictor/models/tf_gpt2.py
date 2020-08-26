@@ -184,7 +184,7 @@ class Block(tf.keras.layers.Layer):
 
 
 class TFAkiGpt2(tf.keras.Model):
-    def __init__(self, *, n_heads, timesteps=8, n_features=16, n_layers=32, **kwargs):
+    def __init__(self, *, n_heads, timesteps=8, n_features=16, n_layers=64, **kwargs):
         super().__init__(**kwargs)
 
         self.timesteps = timesteps

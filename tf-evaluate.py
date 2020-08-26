@@ -91,7 +91,6 @@ def get_model(architecture: str):
             n_heads=2,
             timesteps=TIMESTEPS,
             n_features=N_FEATURES,
-            n_layers=32,
         )
 
     if architecture == 'lstm':

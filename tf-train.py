@@ -97,6 +97,8 @@ def train(name: str, training_kwargs, *, ckpt_path: Path, log_path: Path):
     tb_callback = tf.keras.callbacks.TensorBoard(
         log_dir=log_path / name,
         histogram_freq=1,
+        embeddings_freq=50,
+        profile_batch=0,
     )
 
     # setup checkpoint callback (only saving the best weights
@@ -130,7 +132,6 @@ def get_model(name: str):
             n_heads=2,
             timesteps=TIMESTEPS,
             n_features=N_FEATURES,
-            n_layers=32,
         )
 
     raise AssertionError(f'Unknown model "{name}"')
