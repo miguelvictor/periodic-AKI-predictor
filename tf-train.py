@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from predictor.models import TFAkiBase, TFAkiLstm, TFAkiGpt2
+from predictor.models import TFAkiBase, TFAkiLstm, TFAkiGpt2,TFMLPBase
 
 import fire
 import logging
@@ -77,9 +77,10 @@ def train_models(
     }
 
     # train all models
-    train('base', training_kwargs, ckpt_path=ckpt_path, log_path=log_path)
-    train('lstm', training_kwargs, ckpt_path=ckpt_path, log_path=log_path)
-    train('gpt2', training_kwargs, ckpt_path=ckpt_path, log_path=log_path)
+    #train('base', training_kwargs, ckpt_path=ckpt_path, log_path=log_path)
+    #train('lstm', training_kwargs, ckpt_path=ckpt_path, log_path=log_path)
+    #train('gpt2', training_kwargs, ckpt_path=ckpt_path, log_path=log_path)
+    train('mlp',training_kwargs, ckpt_path=ckpt_path, log_path=log_path)
 
 
 def train(name: str, training_kwargs, *, ckpt_path: Path, log_path: Path):
@@ -138,6 +139,8 @@ def get_model(name: str):
             timesteps=TIMESTEPS,
             n_features=N_FEATURES,
         )
+    if name=='mlp':
+        return TFMLPBase()
 
     raise AssertionError(f'Unknown model "{name}"')
 

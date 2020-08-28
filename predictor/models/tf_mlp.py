@@ -12,11 +12,9 @@ class TFMLPBase(tf.keras.model):
             )
 
     def call(self, x, training=False):
-        x = self.masking(x)
-        bz, sl = shape_list(x)[:2]
-        x = x.reshape(bz*sl,:)
+        mask = tf.reduce_any(x!=0,axis=-1)
+        x = tf.boolean_mask(x,mask)
         x = self.mlp(x)
         out = self.c_proj(x)
-
         return out
         
