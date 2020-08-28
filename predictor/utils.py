@@ -25,8 +25,8 @@ def convert_preds(x, y, y_hat):
 
 
 def early_prediction_score(y_true, y_pred):
-    y_true = y_true.reshape(y_true.shape[0], -1)
-    y_pred = y_pred.reshape(y_pred.shape[0], -1)
+    #y_true = y_true.reshape(y_true.shape[0], -1)
+    #y_pred = y_pred.reshape(y_pred.shape[0], -1)
     assert y_true.shape == y_pred.shape
 
     n_correct = 0

@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from predictor.models import TFAkiBase, TFAkiLstm, TFAkiGpt2,TFMLPBase
-
+from predictor.models import TFAkiBase, TFAkiLstm, TFAkiGpt2
+from predictor.models.tf_mlp import TFMLPBase 
 import fire
 import logging
 import numpy as np
@@ -59,7 +59,6 @@ def train_models(
     assert val_path.exists(), f'{val} does not exist'
 
     # load training and validation data
-    # load training and validation data
     train_matrix = np.load(train_path).astype(np.float32)
     train_x = train_matrix[:, :, :-1]
     train_y = train_matrix[:, :, -1:]
@@ -71,7 +70,7 @@ def train_models(
     val_matrix = np.load(val_path).astype(np.float32)
     val_x = val_matrix[:, :, :-1]
     val_y = val_matrix[:, :, -1:]
-    
+
     val_mask = tf.reduce_any(val_x!=0,axis=-1)
     val_x = tf.boolean_mask(val_x,val_mask)
     val_y = tf.boolean_mask(val_y,val_mask)
@@ -119,7 +118,7 @@ def train(name: str, training_kwargs, *, ckpt_path: Path, log_path: Path):
     model_weights_path = ckpt_path / model_name / name
     ckpt_callback = tf.keras.callbacks.ModelCheckpoint(
         model_weights_path,
-        monitor='val_auc' if name == 'base' else 'val_output_1_auc',
+        monitor='val_auc'  if name == 'base' or name == 'mlp' else 'val_output_1_auc',
         verbose=1,
         save_best_only=True,
         mode='max',

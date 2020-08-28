@@ -1,5 +1,6 @@
 from pathlib import Path
 from predictor.models import TFAkiBase, TFAkiLstm, TFAkiGpt2
+from predictor.models.tf_mlp import TFMLPBase 
 from predictor.utils import convert_preds, early_prediction_score
 from sklearn.metrics import (
     accuracy_score,
@@ -11,6 +12,7 @@ from sklearn.metrics import (
 import fire
 import numpy as np
 import os
+import tensorflow as tf
 
 TIMESTEPS = 8
 N_FEATURES = 16
@@ -44,17 +46,22 @@ def evaluate(
     test_x = test_matrix[:, :, :-1]
     test_y = test_matrix[:, :, -1:]
 
+    test_mask = tf.reduce_any(test_x!=0,axis=-1)
+    test_x = tf.boolean_mask(test_x,test_mask)
+    test_y = tf.boolean_mask(test_y,test_mask)
+
     for model in get_models(ckpt_dir):
         # get model's predictions
         outputs = model(test_x)
         y_hat = outputs[0] if isinstance(outputs, tuple) else outputs
-
+        #print(test_y.shape,y_hat.shape)
         # get model's early prediction score
         escore, stats = early_prediction_score(test_y, np.around(y_hat))
 
         # convert predictions to last-day AKI predictions
-        y, y_hat = convert_preds(test_x, test_y, y_hat)
+        #y, y_hat = convert_preds(test_x, test_y, y_hat)
 
+        y = test_y
         cm = confusion_matrix(y, np.around(y_hat))
         acc = accuracy_score(y, np.around(y_hat))
         score = roc_auc_score(y, y_hat)
@@ -101,6 +108,8 @@ def get_model(architecture: str):
             timesteps=TIMESTEPS,
             n_features=N_FEATURES,
         )
+    if architecture=='mlp':
+        return TFMLPBase()
 
     raise AssertionError(f'Unknown architecture "{architecture}"')
 
