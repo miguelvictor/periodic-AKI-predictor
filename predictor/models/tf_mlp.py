@@ -1,11 +1,12 @@
 import tensorflow as tf
-class TFMLPBase(tf.keras.model):
-   def __init__(self, **kwargs):
+
+class TFMLPBase(tf.keras.Model):
+    def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
         self.masking = tf.keras.layers.Masking(mask_value=0)
         
-        self.mlp = Dense(units=8, activation='relu')
+        self.mlp = tf.keras.layers.Dense(units=8, activation='relu')
         self.c_proj = tf.keras.layers.Dense(
                 1, activation='sigmoid',
                 kernel_initializer=tf.keras.initializers.GlorotNormal(),
