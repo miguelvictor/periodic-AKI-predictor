@@ -45,6 +45,15 @@ CHARTEVENTS_FEATURES = {
 
 
 def partition_rows(input_path, output_path):
+    '''
+    Reads in the combined chartevents and labevents csv file (filtered_events.csv)
+    and aggregates the features values with respect to each ICU day of the different 
+    patients (feature values as the columns, ICU day as the rows).
+
+    Parameters:
+    input_path: the path of the input csv to be processed (e.g., filtered_events.csv)
+    output_path: the path as to where the output of this step should be dumped
+    '''
     logger.info('`partition_rows` has started')
     df = pd.read_csv(input_path)
     df.columns = map(str.lower, df.columns)
@@ -91,6 +100,14 @@ def partition_rows(input_path, output_path):
 
 
 def impute_holes(input_path, output_path):
+    '''
+    Fills in NaN values using forward/backward imputation.
+    Entries that doesn't meet some imposed criteria will be dropped.
+
+    Parameters:
+    input_path: the path of the input csv to be processed (e.g., filtered_events.csv)
+    output_path: the path as to where the output of this step should be dumped
+    '''
     logger.info('`impute_holes` has started')
     df = pd.read_csv(input_path)
     df.columns = map(str.lower, df.columns)
@@ -149,6 +166,16 @@ def impute_holes(input_path, output_path):
 
 
 def fill_nas_or_drop(df, stay_id, features):
+    '''
+    A helper function to the impute_holes function. This does the actual
+    forward/backward imputation which fills the NaN values. Also, entries
+    without valid values for the whole ICU stay span will be dropped.
+
+    Parameters:
+    df: The input dataframe to be processed.
+    stay_id: The ID of the ICU stay of a certain patient to be processed.
+    features: The features used in this work (defined at the top as a constant).
+    '''
     # get mask for the current icu stay
     stay_id_mask = df['stay_id'] == stay_id
 
@@ -168,6 +195,13 @@ def fill_nas_or_drop(df, stay_id, features):
 
 
 def add_patient_info(input_path, output_path):
+    '''
+    Adds the patient information (static) to each of the entries.
+
+    Parameters:
+    input_path: the path of the input csv to be processed (e.g., filtered_events.csv)
+    output_path: the path as to where the output of this step should be dumped
+    '''
     logger.info('`add_patient_info` has started')
 
     admissions_path = MIMIC4_PATH / 'filtered_admissions.csv'
@@ -221,6 +255,14 @@ def add_patient_info(input_path, output_path):
 
 
 def add_aki_labels(input_path, output_path):
+    '''
+    Adds the AKI label to each of the entries (using the values of 
+    age, gender, race, and creatinine).
+
+    Parameters:
+    input_path: the path of the input csv to be processed (e.g., events_imputed.csv)
+    output_path: the path as to where the output of this step should be dumped
+    '''
     logger.info('`add_aki_labels` has started')
 
     df = pd.read_csv(input_path)
@@ -287,6 +329,16 @@ def add_aki_labels(input_path, output_path):
 
 
 def has_aki(diff=None, scr=None, black=None, age=None, gender=None):
+    '''
+    Given scr or age,race,gender, determine if it has AKI or not.
+
+    Parameters:
+    diff: The difference of the creatinine values of a patient between two days
+    scr: The creatinine value of a certain day
+    black: Whether the patient is black or not (1=True, 0=false)
+    age: The age of the patient
+    gender: The gender of the patient (1=Male, 0=Female)
+    '''
     # KDIGO criteria no. 1
     # Increase in SCr by >= 0.3 mg/dl (>= 26.5 lmol/l) within 48 hours
     if diff is not None:
@@ -311,6 +363,9 @@ def has_aki(diff=None, scr=None, black=None, age=None, gender=None):
 
 
 def get_baseline(*, black, age, gender):
+    '''
+    Returns the AKI baseline based on the given parameters.
+    '''
     if 20 <= age <= 24:
         if black == 1:
             # black males: 1.5, black females: 1.2
@@ -397,34 +452,40 @@ def transform_outliers(input_path, output_path):
 
 def extract_dataset(output_dir='dataset', redo=False):
     # create output dir if it does not exist
+    # all of the artifacts of this script will be put inside this directory
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=False, exist_ok=True)
 
     # partition features into days
+    # transform the huge events table into a feature table
     ipath = MIMIC4_PATH / 'filtered_events.csv'
     opath = output_dir / 'events_partitioned.csv'
     if redo or not opath.exists():
         partition_rows(ipath, opath)
 
-    # fill empty holes with median values
+    # not all feature values has a valid value (some of them have NaN)
+    # we use a combination of forward and backward imputation to fill these holes
     ipath = opath
     opath = output_dir / 'events_imputed.csv'
     if redo or not opath.exists():
         impute_holes(ipath, opath)
 
-    # add patient info
+    # in addition to the feature values (dynamic), add the patient's
+    # demographic information (static)
     ipath = opath
     opath = output_dir / 'events_with_demographics.csv'
     if redo or not opath.exists():
         add_patient_info(ipath, opath)
 
-    # add AKI labels
+    # based on the gathered feature values, determine if patient has
+    # AKI or not (as defined by the KDIGO criteria)
     ipath = opath
     opath = output_dir / 'events_with_labels.csv'
     if redo or not opath.exists():
         add_aki_labels(ipath, opath)
 
-    # get rid of outliers
+    # MIMIC-IV contains typographical errors and this will come out as outliers
+    # in this step, we remove these outliers
     ipath = opath
     opath = output_dir / 'events_complete.csv'
     if redo or not opath.exists():
