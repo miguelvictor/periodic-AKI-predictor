@@ -26,21 +26,21 @@ def train_models(
     val: str = 'matrix_validation.npy',
 ):
     '''
-    Trains 3 models (LSTM, GPT-2 and CNN) to predict next-day AKI.
+    Trains 3 models (base LSTM, LSTM with attn, and GPT-2) to predict next-day AKI.
 
     Parameters:
-    epochs: For how many epochs we train the models
+    epochs: For how many epochs to train the models
     batch_size: The batch size to be used during training (the bigger the better)
-    dataset_dir: The name of the directory which should contain the 
-        training and validation datasets
-    ckpt_dir: The name of the directory which the serialized weights of the
-        trained models are saved.
-    training: The training dataset to be used (should be a file serialized using 
-        np.save and with a shape of [n_samples, timesteps, n_features + 1]
-        where 1 stands for the AKI prediction labels)
-    val: The validation dataset to be used (should be a file serialized using 
-        np.save and with a shape of [n_samples, timesteps, n_features + 1]
-        where 1 stands for the AKI prediction labels)
+    dataset_dir: The name of the directory that contains the training and validation 
+        datasets (stored in .npy files)
+    ckpt_dir: The name of the directory where the checkpoints of the trained models 
+        are saved (only the best weights are saved).
+    training: The filename of the training dataset to be used (should be a file 
+        serialized using np.save and with a shape of [n_samples, timesteps, n_features + 1]
+        where 1 refers to the AKI prediction labels)
+    val: The filename of the validation dataset to be used (should be a file 
+        serialized using np.save and with a shape of [n_samples, timesteps, n_features + 1]
+        where 1 refers to the AKI prediction labels)
     '''
     # check cuda availability
     devices = tf.config.list_physical_devices('GPU')
@@ -66,7 +66,8 @@ def train_models(
     val_x = val_matrix[:, :, :-1]
     val_y = val_matrix[:, :, -1:]
 
-    # prepare training keyword args
+    # prepare training keyword arguments
+    # same arguments to be used by the 3 models
     training_kwargs = {
         'x': train_x,
         'y': train_y,
@@ -83,6 +84,17 @@ def train_models(
 
 
 def train(name: str, training_kwargs, *, ckpt_path: Path, log_path: Path):
+    '''
+    Creates and train a specific model. The best weights (roc auc score on the 
+    validation set is monitored) of the model is saved on the directory `ckpt_path`.
+
+    Parameters:
+    name: The name of the model to be trained (base, lstm, gpt2).
+    training_kwargs: The dictionary of all the training parameters for `model.fit`.
+    ckpt_path: The name of the directory where checkpoints will be saved.
+    log_path: The name of the directory where tensorboard stuff will be saved.
+    '''
+    # create the model (from scratch) to be trained
     model = get_model(name)
 
     # we use the default adam optimizer
