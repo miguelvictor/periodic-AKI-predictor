@@ -10,7 +10,6 @@ from sklearn.metrics import (
 
 import fire
 import numpy as np
-import os
 
 TIMESTEPS = 8
 N_FEATURES = 16
@@ -18,23 +17,23 @@ N_FEATURES = 16
 
 def evaluate(
     ckpt_dir: str = 'saved_models',
-    testing: str = 'matrix_testing.npy',
     dataset_dir: str = 'dataset',
+    testing: str = 'matrix_testing.npy',
 ):
     '''
-    Tests the serialized models inside the `ckpt_dir` directory.
-    `ckpt_directory` should contain ONLY the model's weights and not the
-    entire model (saved using torch.save(model.state_dict())). Filenames
-    should follow the pattern {architecture}_e{epochs}_l{n_layers}.pt.
+    After training the models, this script can be invoked to test the models'
+    performance on the testing set. 
 
     Parameters:
-    ckpt_dir: The location of the serialized model state dicts
-    testing: The testing data to be used (a numpy 3d-array serialized using np.save)
-    dataset_dir: The directory that contains the `testing` numpy array
+    ckpt_dir: The location of the saved model checkpoints.
+    dataset_dir: The name of the directory that contains the testing dataset
+    testing: The filename of the training dataset to be used (should be a file 
+        serialized using np.save and with a shape of [n_samples, timesteps, n_features + 1]
+        where 1 refers to the AKI prediction labels)
     '''
     ckpt_dir = Path(ckpt_dir)
     assert ckpt_dir.exists(), \
-        f'"{ckpt_dir}" is empty. Train models first.'
+        f'"{ckpt_dir}" is empty. Train the models first.'
 
     dataset_path = Path(dataset_dir)
     testing_path = dataset_path / testing
@@ -55,11 +54,13 @@ def evaluate(
         # convert predictions to last-day AKI predictions
         y, y_hat = convert_preds(test_x, test_y, y_hat)
 
+        # compute evaluation metrics
         cm = confusion_matrix(y, np.around(y_hat))
         acc = accuracy_score(y, np.around(y_hat))
         score = roc_auc_score(y, y_hat)
         report = classification_report(y, np.around(y_hat))
 
+        # report evaluation metrics to stdout
         print(f'\n[INFO] Evaluation Results: {model.__class__.__name__}')
         print(cm)
         print(f'Accuracy: {acc:.4%}')
@@ -70,13 +71,18 @@ def evaluate(
 
 
 def get_models(ckpt_dir: Path):
-    for dname in os.listdir(ckpt_dir):
+    # get model names based on what is inside the ckpt_dir
+    for f in ckpt_dir.iterdir():
+        # files are ignored (only directories are considered)
+        if f.is_file():
+            continue
+
         # get the model's architecture
         # from the filename of its trained weights
-        architecture, _ = dname.split('_', 1)
+        architecture, _ = f.name.split('_', 1)
 
         # load model's trained weights
-        model_weights_path = ckpt_dir / dname / architecture
+        model_weights_path = f / architecture
 
         # create model and restore its trained weights
         # partial is because we don't need the optimizer's state
