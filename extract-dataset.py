@@ -105,7 +105,7 @@ def impute_holes(input_path, output_path):
     Entries that doesn't meet some imposed criteria will be dropped.
 
     Parameters:
-    input_path: the path of the input csv to be processed (e.g., filtered_events.csv)
+    input_path: the path of the input csv to be processed (e.g., events_partitioned.csv)
     output_path: the path as to where the output of this step should be dumped
     '''
     logger.info('`impute_holes` has started')
@@ -199,7 +199,7 @@ def add_patient_info(input_path, output_path):
     Adds the patient information (static) to each of the entries.
 
     Parameters:
-    input_path: the path of the input csv to be processed (e.g., filtered_events.csv)
+    input_path: the path of the input csv to be processed (e.g., events_imputed.csv)
     output_path: the path as to where the output of this step should be dumped
     '''
     logger.info('`add_patient_info` has started')
@@ -260,7 +260,7 @@ def add_aki_labels(input_path, output_path):
     age, gender, race, and creatinine).
 
     Parameters:
-    input_path: the path of the input csv to be processed (e.g., events_imputed.csv)
+    input_path: the path of the input csv to be processed (e.g., events_with_demographics.csv)
     output_path: the path as to where the output of this step should be dumped
     '''
     logger.info('`add_aki_labels` has started')
@@ -408,6 +408,11 @@ def get_baseline(*, black, age, gender):
 
 
 def get_nan_index(series):
+    '''
+    Returns the index of the first nan value within the series (-1 if there's
+    no nan values in the series). This only considers the nan values from the 3rd element
+    onwards since the first and second element are already checked and assumed to be non-nan.
+    '''
     result = ~np.isfinite(series)
     for i, x in enumerate(result[2:]):
         if x:
@@ -417,6 +422,14 @@ def get_nan_index(series):
 
 
 def transform_outliers(input_path, output_path):
+    '''
+    Detects the presence of outliers and replaces their values 
+    with the lower/upper bound.
+
+    Parameters:
+    input_path: the path of the input csv to be processed (e.g., events_with_labels.csv)
+    output_path: the path as to where the output of this step should be dumped
+    '''
     logger.info('`transform_outliers` has started')
     df = pd.read_csv(input_path)
     df.columns = map(str.lower, df.columns)
