@@ -62,8 +62,13 @@ class BaseModel(nn.Module):
 
 
 class PredictiveModel1(pl.LightningModule):
-    def __init__(self):
+    def __init__(self, learning_rate: float = 1e-3):
         super().__init__()
+
+        # initialize model hyperparameters
+        self.lr = learning_rate
+
+        # initialize model layers
         self.base = BaseModel()
         self.head = nn.Linear(N_FEATURES, N_FEATURES)
         self.drop = nn.Dropout(CONFIG.resid_pdrop)
@@ -92,12 +97,17 @@ class PredictiveModel1(pl.LightningModule):
         return loss
 
     def configure_optimizers(self):
-        return torch.optim.Adam(self.parameters(), lr=1e-4)
+        return torch.optim.Adam(self.parameters(), lr=self.lr)
 
 
 class PredictiveModel2(pl.LightningModule):
-    def __init__(self):
+    def __init__(self, learning_rate: float = 1e-5):
         super().__init__()
+
+        # initialize model hyperparameters
+        self.lr = learning_rate
+
+        # initialize model layers
         self.base = BaseModel()
         self.head = nn.Linear(N_FEATURES, 1)
         self.drop = nn.Dropout(CONFIG.resid_pdrop)
@@ -116,4 +126,4 @@ class PredictiveModel2(pl.LightningModule):
         return loss
 
     def configure_optimizers(self):
-        return torch.optim.Adam(self.parameters(), lr=1e-5)
+        return torch.optim.Adam(self.parameters(), lr=self.lr)
