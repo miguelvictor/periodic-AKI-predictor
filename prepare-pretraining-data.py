@@ -336,13 +336,13 @@ def transform_to_tensor(input_path, output_path):
     n_stays_before = len(pd.unique(df['stay_id']))
     df = df.groupby('stay_id').apply(padding).reset_index(drop=True)
     n_stays_after = len(pd.unique(df['stay_id']))
-    n_stays, remainder = divmod(df.shape[0], TIMESTEPS)
+    n_stays, remainder = divmod(df.shape[0], TIMESTEPS + 1)
     assert n_stays_before == n_stays_after
     assert n_stays == n_stays_after
     assert remainder == 0
 
     # reshape tensor into a 3D tensor with shape [_, timesteps, n_features]
-    matrix = df[columns].values.reshape(-1, TIMESTEPS, N_FEATURES)
+    matrix = df[columns].values.reshape(-1, TIMESTEPS + 1, N_FEATURES)
     np.save(output_path, matrix)
     logger.info('`transform_outliers` has ended')
 
@@ -353,9 +353,9 @@ def padding(group) -> pd.DataFrame:
     a number of rows equal to the timesteps constant. Also, stay_id
     column is preserved on the padding rows.
     '''
-    group = group[:TIMESTEPS]
+    group = group[:TIMESTEPS+1]
     n_rows, n_cols = group.shape
-    n_rows = TIMESTEPS - n_rows
+    n_rows = TIMESTEPS + 1 - n_rows
     padding = np.zeros((n_rows, n_cols))
     padding = pd.DataFrame(padding, columns=group.columns)
     padding['stay_id'] = group['stay_id'].iloc[0]

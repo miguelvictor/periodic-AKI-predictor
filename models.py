@@ -1,4 +1,5 @@
 from transformers.models.gpt2.modeling_gpt2 import GPT2Config, Block
+from typing import Optional
 
 import pytorch_lightning as pl
 import torch
@@ -25,7 +26,7 @@ class BaseModel(nn.Module):
         ])
         self.ln_f = nn.LayerNorm(N_FEATURES, eps=CONFIG.layer_norm_epsilon)
 
-    def forward(self, x: torch.Tensor):
+    def forward(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None):
         # input data's should be a 3D tensor
         assert x.ndim == 3
         _, n_timesteps, n_features = x.size()
@@ -36,10 +37,6 @@ class BaseModel(nn.Module):
             n_timesteps, dtype=torch.long, device=x.device)
         hidden_states = x + self.wpe(position_ids)
         hidden_states = self.drop(hidden_states)
-
-        # create attention mask
-        attn_mask = x.bool().any(dim=-1).float()[:, None, None, :]
-        attn_mask = (1.0 - attn_mask) * -10000.0
 
         # go through layer blocks
         for block in self.h:
@@ -73,10 +70,24 @@ class PredictiveModel1(pl.LightningModule):
         self.head = nn.Linear(N_FEATURES, N_FEATURES)
         self.drop = nn.Dropout(CONFIG.resid_pdrop)
 
-    def forward(self, x: torch.Tensor):
-        hidden_states = self.base(x)
+    def forward(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None):
+        # retrieve batch size from input tensor
+        assert x.ndim == 3
+        batch_size, timesteps, _ = x.shape
+
+        # retrieve by going through GPT-2 body
+        hidden_states = self.base(x, attn_mask=attn_mask)
+
+        # project hidden states
         output_values = self.head(hidden_states)
         output_values = self.drop(output_values)
+
+        # also apply attention mask for the head layer
+        if attn_mask is not None:
+            attn_mask = (~attn_mask.bool()).float()
+            attn_mask = attn_mask.view(batch_size, timesteps, 1)
+            output_values = output_values * attn_mask
+
         return output_values
 
     def training_step(self, batch, _):
@@ -88,11 +99,15 @@ class PredictiveModel1(pl.LightningModule):
         x, y = batch[:, :-1], batch[:, 1:]
 
         # create attention mask to exclude padded days
-        mask = x.bool().any(dim=-1)
+        # note that the attention mask should be based on the labels y
+        # since inputs x may contain data without the necessary label y
+        attn_mask = y.bool().any(dim=-1).float()
+        attn_mask = (1 - attn_mask) * -10000.0
+        attn_mask = attn_mask[:, None, None, :]
 
         # do forward pass and compute loss
-        y_hat = self(x)
-        loss = F.mse_loss(y_hat[mask], y[mask])
+        y_hat = self(x, attn_mask=attn_mask)
+        loss = F.mse_loss(y_hat, y)
         self.log('train_loss', loss)
         return loss
 
