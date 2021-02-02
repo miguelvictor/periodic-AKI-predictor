@@ -1,3 +1,4 @@
+from argparse import ArgumentParser
 from transformers.models.gpt2.modeling_gpt2 import GPT2Config, Block
 from typing import Optional
 
@@ -6,35 +7,27 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-N_TIMESTEPS = 8
-N_FEATURES = 16
-CONFIG = GPT2Config(
-    n_embd=N_FEATURES, n_ctx=1024, n_inner=1024,
-    n_head=4, n_layer=16,
-)
-assert N_FEATURES % CONFIG.n_head == 0
-
 
 class BaseModel(nn.Module):
-    def __init__(self):
+    def __init__(self, config: GPT2Config):
         super(BaseModel, self).__init__()
-        self.wpe = nn.Embedding(N_TIMESTEPS, N_FEATURES)
-        self.drop = nn.Dropout(CONFIG.embd_pdrop)
+        self.config = config
+        self.wpe = nn.Embedding(config.n_positions, config.n_embd)
+        self.drop = nn.Dropout(config.embd_pdrop)
         self.h = nn.ModuleList([
-            Block(CONFIG.n_ctx, CONFIG, scale=True)
-            for _ in range(CONFIG.n_layer)
+            Block(config.n_ctx, config, scale=True)
+            for _ in range(config.n_layer)
         ])
-        self.ln_f = nn.LayerNorm(N_FEATURES, eps=CONFIG.layer_norm_epsilon)
+        self.ln_f = nn.LayerNorm(config.n_embd, eps=config.layer_norm_epsilon)
 
     def forward(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None):
         # input data's should be a 3D tensor
         assert x.ndim == 3
-        _, n_timesteps, n_features = x.size()
-        assert n_timesteps <= N_TIMESTEPS and n_features == N_FEATURES
+        _, n_days, n_features = x.size()
+        assert n_days <= self.config.n_positions and n_features == self.config.n_embd
 
         # add position embeddings
-        position_ids = torch.arange(
-            n_timesteps, dtype=torch.long, device=x.device)
+        position_ids = torch.arange(n_days, dtype=torch.long, device=x.device)
         hidden_states = x + self.wpe(position_ids)
         hidden_states = self.drop(hidden_states)
 
@@ -59,16 +52,34 @@ class BaseModel(nn.Module):
 
 
 class PredictiveModel1(pl.LightningModule):
-    def __init__(self, learning_rate: float = 1e-3):
+    def __init__(
+        self,
+        n_days=8,
+        n_features=16,
+        n_layers=16,
+        n_head=4,
+        d_model=1024,
+        learning_rate=1e-3,
+        **kwargs,
+    ):
         super().__init__()
+        self.save_hyperparameters(
+            'n_days', 'n_features', 'n_layers', 'n_head', 'd_model', 'learning_rate')
+        config = self.create_config()
+        self.base = BaseModel(config)
+        self.head = nn.Linear(n_features, n_features)
+        self.drop = nn.Dropout(config.resid_pdrop)
 
-        # initialize model hyperparameters
-        self.lr = learning_rate
-
-        # initialize model layers
-        self.base = BaseModel()
-        self.head = nn.Linear(N_FEATURES, N_FEATURES)
-        self.drop = nn.Dropout(CONFIG.resid_pdrop)
+    def create_config(self):
+        assert self.hparams.n_features % self.hparams.n_head == 0
+        return GPT2Config(
+            n_positions=self.hparams.n_days,
+            n_embd=self.hparams.n_features,
+            n_ctx=self.hparams.d_model,
+            n_inner=self.hparams.d_model,
+            n_head=self.hparams.n_head,
+            n_layer=self.hparams.n_layers,
+        )
 
     def forward(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None):
         # retrieve batch size from input tensor
@@ -112,20 +123,49 @@ class PredictiveModel1(pl.LightningModule):
         return loss
 
     def configure_optimizers(self):
-        return torch.optim.Adam(self.parameters(), lr=self.lr)
+        return torch.optim.Adam(self.parameters(), lr=self.hparams.learning_rate)
+
+    @staticmethod
+    def add_model_specific_args(parent_parser):
+        parser = ArgumentParser(parents=[parent_parser], add_help=False)
+        parser.add_argument('--n_days', type=int, default=8)
+        parser.add_argument('--n_features', type=int, default=16)
+        parser.add_argument('--n_layers', type=int, default=16)
+        parser.add_argument('--n_head', type=int, default=4)
+        parser.add_argument('--d_model', type=int, default=1024)
+        parser.add_argument('--learning_rate', type=float, default=1e-3)
+        return parser
 
 
 class PredictiveModel2(pl.LightningModule):
-    def __init__(self, learning_rate: float = 1e-5):
+    def __init__(
+        self,
+        n_days=8,
+        n_features=16,
+        n_layers=16,
+        n_head=4,
+        d_model=1024,
+        learning_rate=1e-5,
+        **kwargs,
+    ):
         super().__init__()
+        self.save_hyperparameters(
+            'n_days', 'n_features', 'n_layers', 'n_head', 'd_model', 'learning_rate')
+        config = self.create_config()
+        self.base = BaseModel(config)
+        self.head = nn.Linear(config.n_embd, 1)
+        self.drop = nn.Dropout(config.resid_pdrop)
 
-        # initialize model hyperparameters
-        self.lr = learning_rate
-
-        # initialize model layers
-        self.base = BaseModel()
-        self.head = nn.Linear(N_FEATURES, 1)
-        self.drop = nn.Dropout(CONFIG.resid_pdrop)
+    def create_config(self):
+        assert self.hparams.n_features % self.hparams.n_head == 0
+        return GPT2Config(
+            n_positions=self.hparams.n_days,
+            n_embd=self.hparams.n_features,
+            n_ctx=self.hparams.d_model,
+            n_inner=self.hparams.d_model,
+            n_head=self.hparams.n_head,
+            n_layer=self.hparams.n_layers,
+        )
 
     def forward(self, x: torch.Tensor):
         hidden_states = self.base(x)
@@ -142,3 +182,14 @@ class PredictiveModel2(pl.LightningModule):
 
     def configure_optimizers(self):
         return torch.optim.Adam(self.parameters(), lr=self.lr)
+
+    @staticmethod
+    def add_model_specific_args(parent_parser):
+        parser = ArgumentParser(parents=[parent_parser], add_help=False)
+        parser.add_argument('--n_days', type=int, default=8)
+        parser.add_argument('--n_features', type=int, default=16)
+        parser.add_argument('--n_layers', type=int, default=16)
+        parser.add_argument('--n_head', type=int, default=4)
+        parser.add_argument('--d_model', type=int, default=1024)
+        parser.add_argument('--learning_rate', type=float, default=1e-5)
+        return parser
