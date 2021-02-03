@@ -167,21 +167,56 @@ class PredictiveModel2(pl.LightningModule):
             n_layer=self.hparams.n_layers,
         )
 
-    def forward(self, x: torch.Tensor):
-        hidden_states = self.base(x)
+    def forward(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None):
+        # retrieve batch size from input tensor
+        assert x.ndim == 3
+        batch_size, timesteps, _ = x.shape
+
+        # retrieve by going through GPT-2 body
+        hidden_states = self.base(x, attn_mask=attn_mask)
+
+        # project hidden states
         probabilities = self.head(hidden_states)
         probabilities = self.drop(probabilities)
+        probabilities = probabilities.view(batch_size, timesteps)
+
+        # also apply attention mask for the head layer
+        if attn_mask is not None:
+            attn_mask = (~attn_mask.bool()).float()
+            attn_mask = attn_mask.view(batch_size, timesteps)
+            probabilities = probabilities * attn_mask
+
         return probabilities
 
     def training_step(self, batch, _):
-        x, y = batch
-        y_hat = self(x)
-        loss = F.binary_cross_entropy_with_logits(y_hat, y)
+        loss = self.__compute_loss(batch)
         self.log('train_loss', loss)
         return loss
 
+    def validation_step(self, batch, _):
+        loss = self.__compute_loss(batch)
+        self.log('val_loss', loss)
+
     def configure_optimizers(self):
-        return torch.optim.Adam(self.parameters(), lr=self.lr)
+        return torch.optim.Adam(self.parameters(), lr=self.hparams.learning_rate)
+
+    def __compute_loss(self, batch):
+        # unpack list if using TensorDataset
+        batch = batch[0] if isinstance(batch, list) else batch
+        assert batch.ndim == 3 and batch.size(1) > 1
+
+        # shift input for inputs and targets
+        x, y = batch[:, :, :-1], batch[:, :, -1]
+
+        # create attention mask to exclude padded days
+        # note that the attention mask should be based on the labels y
+        # since inputs x may contain data without the necessary label y
+        attn_mask = x.bool().any(dim=-1).float()
+        attn_mask = (1 - attn_mask) * -10000.0
+        attn_mask = attn_mask[:, None, None, :]
+
+        y_hat = self(x, attn_mask=attn_mask)
+        return F.binary_cross_entropy_with_logits(y_hat, y)
 
     @staticmethod
     def add_model_specific_args(parent_parser):
