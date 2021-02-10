@@ -11,3 +11,5 @@ lightning_logs
 
 *.logs
 *.npy
+*.ckpt
+*.tar.gz
