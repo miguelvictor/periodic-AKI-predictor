@@ -156,11 +156,15 @@ class PredictiveModel2(pl.LightningModule):
         n_head=N_HEAD,
         d_model=D_MODEL,
         learning_rate=FINETUNE_LR,
+        pretrained=False,
         **kwargs,
     ):
         super().__init__()
         self.save_hyperparameters(
-            'n_days', 'n_features', 'n_layers', 'n_head', 'd_model', 'learning_rate')
+            'n_days', 'n_features', 'n_layers', 'n_head',
+            'd_model', 'learning_rate', 'pretrained',
+        )
+
         config = self.create_config()
         self.base = BaseModel(config)
         self.head = nn.Linear(config.n_embd, 1)
@@ -177,10 +181,15 @@ class PredictiveModel2(pl.LightningModule):
             n_layer=self.hparams.n_layers,
         )
 
-    def forward(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None):
+    def forward(self, x: torch.Tensor):
         # retrieve batch size from input tensor
         assert x.ndim == 3
         batch_size, timesteps, _ = x.shape
+
+        # create attention mask to exclude padded days
+        attn_mask = x.bool().any(dim=-1).float()
+        attn_mask = (1 - attn_mask) * -10000.0
+        attn_mask = attn_mask.view(batch_size, 1, 1, timesteps)
 
         # retrieve by going through GPT-2 body
         hidden_states = self.base(x, attn_mask=attn_mask)
@@ -189,12 +198,6 @@ class PredictiveModel2(pl.LightningModule):
         probabilities = self.head(hidden_states)
         probabilities = self.drop(probabilities)
         probabilities = probabilities.view(batch_size, timesteps)
-
-        # also apply attention mask for the head layer
-        if attn_mask is not None:
-            attn_mask = (~attn_mask.bool()).float()
-            attn_mask = attn_mask.view(batch_size, timesteps)
-            probabilities = probabilities * attn_mask
 
         return probabilities
 
@@ -206,6 +209,7 @@ class PredictiveModel2(pl.LightningModule):
     def validation_step(self, batch, _):
         loss = self.__compute_loss(batch)
         self.log('val_loss', loss)
+        return loss
 
     def configure_optimizers(self):
         return torch.optim.Adam(self.parameters(), lr=self.hparams.learning_rate)
@@ -215,18 +219,17 @@ class PredictiveModel2(pl.LightningModule):
         batch = batch[0] if isinstance(batch, list) else batch
         assert batch.ndim == 3 and batch.size(1) > 1
 
-        # shift input for inputs and targets
+        # the last value on the 3rd dimension is the AKI label
         x, y = batch[:, :, :-1], batch[:, :, -1]
 
-        # create attention mask to exclude padded days
-        # note that the attention mask should be based on the labels y
-        # since inputs x may contain data without the necessary label y
-        attn_mask = x.bool().any(dim=-1).float()
-        attn_mask = (1 - attn_mask) * -10000.0
-        attn_mask = attn_mask[:, None, None, :]
+        # get model logits
+        y_hat = self(x)
 
-        y_hat = self(x, attn_mask=attn_mask)
-        return F.binary_cross_entropy_with_logits(y_hat, y)
+        # compute loss while masking padding days (including first day prediction)
+        mask = x.bool().any(dim=-1)
+        mask[:, 0] = False
+
+        return F.binary_cross_entropy_with_logits(y_hat[mask], y[mask])
 
     @staticmethod
     def add_model_specific_args(parent_parser):
@@ -260,6 +263,7 @@ class PredictiveModel2(pl.LightningModule):
         }
 
         # initialize finetuning model
+        kwargs['pretrained'] = True
         model = PredictiveModel2(**kwargs)
 
         # add the weights for the head layer of the finetuning model
