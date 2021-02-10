@@ -7,6 +7,16 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+# default hyperparameters shared by both models
+N_TIMESTEPS = 8
+N_FEATURES = 16
+N_LAYERS = 16
+N_HEAD = 4
+D_MODEL = 1024
+PRETRAIN_LR = 1e-3
+FINETUNE_LR = 1e-5
+assert N_FEATURES % N_HEAD == 0
+
 
 class BaseModel(nn.Module):
     def __init__(self, config: GPT2Config):
@@ -54,12 +64,12 @@ class BaseModel(nn.Module):
 class PredictiveModel1(pl.LightningModule):
     def __init__(
         self,
-        n_days=8,
-        n_features=16,
-        n_layers=16,
-        n_head=4,
-        d_model=1024,
-        learning_rate=1e-3,
+        n_days=N_TIMESTEPS,
+        n_features=N_FEATURES,
+        n_layers=N_LAYERS,
+        n_head=N_HEAD,
+        d_model=D_MODEL,
+        learning_rate=PRETRAIN_LR,
         **kwargs,
     ):
         super().__init__()
@@ -128,24 +138,24 @@ class PredictiveModel1(pl.LightningModule):
     @staticmethod
     def add_model_specific_args(parent_parser):
         parser = ArgumentParser(parents=[parent_parser], add_help=False)
-        parser.add_argument('--n_days', type=int, default=8)
-        parser.add_argument('--n_features', type=int, default=16)
-        parser.add_argument('--n_layers', type=int, default=16)
-        parser.add_argument('--n_head', type=int, default=4)
-        parser.add_argument('--d_model', type=int, default=1024)
-        parser.add_argument('--learning_rate', type=float, default=1e-3)
+        parser.add_argument('--n_days', type=int, default=N_TIMESTEPS)
+        parser.add_argument('--n_features', type=int, default=N_FEATURES)
+        parser.add_argument('--n_layers', type=int, default=N_LAYERS)
+        parser.add_argument('--n_head', type=int, default=N_HEAD)
+        parser.add_argument('--d_model', type=int, default=D_MODEL)
+        parser.add_argument('--learning_rate', type=float, default=PRETRAIN_LR)
         return parser
 
 
 class PredictiveModel2(pl.LightningModule):
     def __init__(
         self,
-        n_days=8,
-        n_features=16,
-        n_layers=16,
-        n_head=4,
-        d_model=1024,
-        learning_rate=1e-5,
+        n_days=N_TIMESTEPS,
+        n_features=N_FEATURES,
+        n_layers=N_LAYERS,
+        n_head=N_HEAD,
+        d_model=D_MODEL,
+        learning_rate=FINETUNE_LR,
         **kwargs,
     ):
         super().__init__()
@@ -221,10 +231,42 @@ class PredictiveModel2(pl.LightningModule):
     @staticmethod
     def add_model_specific_args(parent_parser):
         parser = ArgumentParser(parents=[parent_parser], add_help=False)
-        parser.add_argument('--n_days', type=int, default=8)
-        parser.add_argument('--n_features', type=int, default=16)
-        parser.add_argument('--n_layers', type=int, default=16)
-        parser.add_argument('--n_head', type=int, default=4)
-        parser.add_argument('--d_model', type=int, default=1024)
-        parser.add_argument('--learning_rate', type=float, default=1e-5)
+        parser.add_argument('--n_days', type=int, default=N_TIMESTEPS)
+        parser.add_argument('--n_features', type=int, default=N_FEATURES)
+        parser.add_argument('--n_layers', type=int, default=N_LAYERS)
+        parser.add_argument('--n_head', type=int, default=N_HEAD)
+        parser.add_argument('--d_model', type=int, default=D_MODEL)
+        parser.add_argument('--learning_rate', type=float, default=FINETUNE_LR)
         return parser
+
+    @staticmethod
+    def from_pretrained(path, **kwargs):
+        pretrained = PredictiveModel1.load_from_checkpoint(path)
+
+        # hyperparameters for the base model should be the same for both models
+        hparams = pretrained.hparams
+        assert hparams.n_days == kwargs.get('n_days', N_TIMESTEPS)
+        assert hparams.n_features == kwargs.get('n_features', N_FEATURES)
+        assert hparams.n_layers == kwargs.get('n_layers', N_LAYERS)
+        assert hparams.n_head == kwargs.get('n_head', N_HEAD)
+        assert hparams.d_model == kwargs.get('d_model', D_MODEL)
+
+        # remove head layer weights from state dict
+        # since the head layer is only used for pretraining and not finetuning
+        state_dict = {
+            k: v
+            for k, v in pretrained.state_dict().items()
+            if not k.startswith('head')
+        }
+
+        # initialize finetuning model
+        model = PredictiveModel2(**kwargs)
+
+        # add the weights for the head layer of the finetuning model
+        # the initial weights of the newly initialized model can be used
+        state_dict['head.weight'] = model.head.weight
+        state_dict['head.bias'] = model.head.bias
+
+        # load all weights from the pretrained model (except the head layer)
+        model.load_state_dict(state_dict=state_dict)
+        return model
