@@ -14,7 +14,7 @@ N_LAYERS = 16
 N_HEAD = 4
 D_MODEL = 1024
 PRETRAIN_LR = 1e-3
-FINETUNE_LR = 1e-5
+FINETUNE_LR = 0.001
 assert N_FEATURES % N_HEAD == 0
 
 
@@ -214,6 +214,26 @@ class PredictiveModel2(pl.LightningModule):
     def configure_optimizers(self):
         return torch.optim.Adam(self.parameters(), lr=self.hparams.learning_rate)
 
+    def get_weight_from_labels(self, labels):
+        # labels should be a matrix [timesteps, probabilities]
+        timesteps, _ = labels.size()
+
+        # labels should only contain 1s and 0s
+        unique_labels = torch.unique(labels)
+        assert unique_labels.size(0) == 2
+        assert torch.all((unique_labels == 0) | (unique_labels == 1)).item()
+
+        # generate weight for the labels per day
+        # each day would have a total weight of 2 (1 per each class)
+        pos = torch.sum(labels, dim=0)
+        neg = timesteps - pos
+        weight = labels / pos + ((1 - labels) / neg)
+
+        # imbalanced days will contain nans, we set them to zero
+        weight[~torch.isfinite(weight)] = 0
+
+        return weight
+
     def __compute_loss(self, batch):
         # unpack list if using TensorDataset
         batch = batch[0] if isinstance(batch, list) else batch
@@ -225,11 +245,22 @@ class PredictiveModel2(pl.LightningModule):
         # get model logits
         y_hat = self(x)
 
-        # compute loss while masking padding days (including first day prediction)
+        # create mask so that padding days are not included in the loss computation
         mask = x.bool().any(dim=-1)
         mask[:, 0] = False
 
-        return F.binary_cross_entropy_with_logits(y_hat[mask], y[mask])
+        # create label weights to counter the effect of having an enormous imbalance
+        # of positive and negative examples in the final model
+        weight = self.get_weight_from_labels(y)
+
+        # compute loss while masking padding days (including first day prediction)
+        # and adding weights for the imbalance of positive and negative samples
+        return F.binary_cross_entropy_with_logits(
+            input=y_hat[mask],
+            target=y[mask],
+            weight=weight[mask],
+            reduction='mean',
+        )
 
     @staticmethod
     def add_model_specific_args(parent_parser):

@@ -32,6 +32,7 @@ def undersample(name: str = 'events_complete.csv', dataset_dir: str = 'dataset')
 
     # pad dataframe so that each ICU stay will be 8 days
     # also add sanity checks
+    print(f'Padding samples up to {TIMESTEPS} days.')
     n_stays_before = len(pd.unique(df['stay_id']))
     df = df.groupby('stay_id').apply(padding).reset_index(drop=True)
     n_stays_after = len(pd.unique(df['stay_id']))
@@ -45,6 +46,7 @@ def undersample(name: str = 'events_complete.csv', dataset_dir: str = 'dataset')
     matrix = df[columns].values.reshape(-1, TIMESTEPS, N_FEATURES + 1)
 
     # balance 2, 3, 4, 5, 6, 7, 8 los
+    print(f'Splitting samples for training, validation, and testing sets.')
     train_indices = []
     val_indices = []
     test_indices = []
@@ -88,10 +90,6 @@ def split_los_samples(stats: pd.DataFrame, mapping: Dict[int, int], los: int) ->
     for i in range(int(los / 2)):
         set1 = stats[(stats['los'] == los) & (stats['aki'] == i)]
         set2 = stats[(stats['los'] == los) & (stats['aki'] == los - 1 - i)]
-
-        # undersample by dropping extra samples from either set
-        u_len = min(set1.shape[0], set2.shape[0])
-        set1, set2 = set1.iloc[:u_len], set2.iloc[:u_len]
 
         # split samples for training/validation/testing sets
         set1_train, set1_val, set1_test = split_indices(set1.index)
