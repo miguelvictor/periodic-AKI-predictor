@@ -3,3 +3,4 @@ pandas~=1.2.1
 fire~=0.4.0
 pytorch_lightning~=1.1.6
 transformers~=4.2.2
+prettytable~=2.0.0

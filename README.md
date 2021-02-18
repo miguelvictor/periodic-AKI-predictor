@@ -50,3 +50,11 @@ To train the model from scratch (without pretraining), do not provide the path a
 ```
 python finetune.py --path=<path-to-ckpt-file> --gpus=1
 ```
+
+# Evaluation
+
+To evaluate a saved checkpoint, run the command below. This command expects a file named `finetuning_testing.npy` in the current directory. To point to other location, pass the `test_path` argument.
+
+```
+python evaluate.py <path-to-ckpt-file>
+```

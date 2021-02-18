@@ -1,10 +1,12 @@
 from models import PredictiveModel2
+from prettytable import PrettyTable
 from sklearn.metrics import (
     accuracy_score,
     classification_report,
     confusion_matrix,
     roc_auc_score,
 )
+from typing import List
 
 import fire
 import numpy as np
@@ -12,7 +14,7 @@ import os
 import torch
 
 
-def evaluate(ckpt_path: str, test_path: str):
+def evaluate(ckpt_path: str, test_path: str = 'finetuning_testing.npy'):
     # load testing dataset
     data = np.load(test_path)
     data = torch.as_tensor(data, dtype=torch.float32)
@@ -41,12 +43,20 @@ def evaluate(ckpt_path: str, test_path: str):
     score = roc_auc_score(y_true, y_pred)
     report = classification_report(y_true, np.around(y_pred))
 
-    print(f'\n[INFO] Evaluation Results: {model.__class__.__name__}')
-    print(cm)
+    print('=' * 60)
     print(f'Accuracy: {acc:.4%}')
     print(f'ROC-AUC Score: {score:.4%}')
+    print(format_confusion_matrix(cm))
     print(report)
-    print('=' * 40)
+    print('=' * 60)
+
+
+def format_confusion_matrix(cm: List[List[int]]):
+    x = PrettyTable()
+    x.field_names = ["", "Model (-)", "Model (+)"]
+    x.add_row(["Actual (-)", cm[0][0], cm[0][1]])
+    x.add_row(["Actual (+)", cm[1][0], cm[1][1]])
+    return x
 
 
 def main(ckpt_path: str, test_path: str):
