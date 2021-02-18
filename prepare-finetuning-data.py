@@ -91,9 +91,22 @@ def split_los_samples(stats: pd.DataFrame, mapping: Dict[int, int], los: int) ->
         set1 = stats[(stats['los'] == los) & (stats['aki'] == i)]
         set2 = stats[(stats['los'] == los) & (stats['aki'] == los - 1 - i)]
 
+        # generate the test set using the undersampled sets
+        u_len = min(set1.shape[0], set2.shape[0])
+        _, _, set1_test = split_indices(set1.iloc[:u_len].index)
+        _, _, set2_test = split_indices(set2.iloc[:u_len].index)
+
+        # remove the indices from the original sets so that they
+        # won't be resampled back into training/validation sets
+        set1 = set1.drop(index=set1_test)
+        set2 = set2.drop(index=set2_test)
+
         # split samples for training/validation/testing sets
-        set1_train, set1_val, set1_test = split_indices(set1.index)
-        set2_train, set2_val, set2_test = split_indices(set2.index)
+        # while also adding the excess samples back into the training set
+        set1_train, set1_val, _excess1 = split_indices(set1.index)
+        set2_train, set2_val, _excess2 = split_indices(set2.index)
+        set1_train.extend(_excess1)
+        set2_train.extend(_excess2)
 
         yield (
             [mapping[index] for index in set1_train + set2_train],
